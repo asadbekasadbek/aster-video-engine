@@ -12,3 +12,5 @@ M8: Rust-only dataset ingest, validation and tiny training experiment; checkpoin
 M9: 10 s / 1080p target and cross-platform portability experiments; report limits and tradeoffs.
 
 At every milestone: design -> implementation -> tests -> benchmark -> review -> documentation -> checkpoint. Advance only when acceptance evidence exists.
+
+2026-09-20 dependency clarification: M4.1 raw-frame media I/O can be validated with clearly labelled synthetic data before M3 weights approval. This does not complete pretrained generation. M3 is split into header inspection, CPU library probe, actual image inference, CUDA feasibility and a separate real video experiment. M5–M9 remain future work; final SPEC acceptance is not met by these infrastructure checks.

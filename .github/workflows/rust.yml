@@ -1,0 +1,14 @@
+name: Rust validation
+on: [push, pull_request]
+env:
+  CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+      - run: cargo +1.98.1 fetch --locked
+      - run: cargo +1.98.1 fmt --all -- --check
+      - run: cargo +1.98.1 clippy --workspace --all-targets --offline -- -D warnings
+      - run: cargo +1.98.1 test --workspace --offline
