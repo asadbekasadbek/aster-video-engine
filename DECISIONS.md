@@ -31,3 +31,19 @@ Use Rust std to write bounded planar YUV420 YUV4MPEG2 streams with explicit rati
 Status: CPU build and focused tensor/autodiff test passed; full final validation recorded in PROGRESS.
 
 User separately authorized Candle 0.11.0 CPU dependencies. Keep the probe in aster-candle; core reference does not depend on Candle. Do not enable cuda/cudnn/mkl/metal, copy DLLs or install a toolkit implicitly. Registry Candle 0.11.0 differs from browsed main: its tokenizers dependency uses onig/native C. Existing MSVC builds it without Python. A successful CPU probe establishes only tested operations, not whole-model compatibility or video quality.
+
+## ADR-007 — 2026-09-22: world first, conservative reuse
+Context: revised owner request makes persistent state central; earlier roadmap placed it after inference. Preserve validated infrastructure, promote W1–W4 independently of model approval. Use bounded immutable snapshots, fixed-point millimetres and stable opaque appearance IDs in the first Rust stage; atomic event batches prevent half-applied interactions. Alternatives: unbounded event log, immediate neural scene parsing, per-frame prompts. Consequences: bounded deterministic symbolic tests now; no physical simulation or visual identity guarantee. Camera, relationships and parser follow in W2. Partial generation requires explicit backend evidence; unknown effects force FULL. Research sources below support layout conditioning/local editing as directions, not arbitrary reusable neural compute.
+## ADR-008 — 2026-09-23: real LTX trial behind explicit approval
+User prioritizes actual local text-to-video before further synthetic optimization. Select LTX 0.9.8 2B distilled with CPU GGUF T5 and staged CUDA DiT/VAE as a trial; exact sources/licenses/downloads in docs/ltx-inference-approval.md. SD image probe is no longer a required prerequisite. Alternatives Wan require more Rust porting; SVD lacks direct text input. Windows fit and generation quality remain unproven. Upstream example's silent CPU fallback, automatic downloads and whole-model GPU load are unacceptable as Aster integration defaults.
+
+Keep restricted planner explicit; it rejects unknown text, while generate validates arbitrary text but returns backend_unavailable until actual adapter exists. FULL is the only safe neural mode until conditioning and partial inference are validated. Symbolic IDs, cache policy and residency reservations do not imply neural identity or reduced GPU work. MP4 uses existing user-selected native FFmpeg with bounded frame streaming and no-overwrite output; no redistribution or system install is needed for this tested media path. Whole inference metrics must include stated process/device scope and encoder overhead separately.
+## 2026-09-23 — native LTX experimental boundary
+- Keep the pinned Candle fork in an isolated Cargo workspace; communicate via native worker process and CLI arguments. Preserve registry Candle baseline.
+- First trial stages CPU quantized T5, CUDA BF16 DiT and CUDA VAE sequentially. Payload bounds are not full VRAM enforcement. No block streaming or selective neural generation claim.
+- Preserve official explicit distilled sigmas without terminal stretching; reject non-finite VAE output before pixel conversion.
+
+## 2026-09-23 — observed model boundary
+- First real Rust-only CUDA MP4 is verified; retain the small first-pass baseline as an experimental generator, not a production-quality scene engine.
+- Wire Manager::transfer_value to actual weight copies with synchronization before releasing CPU tensors. Keep activation/workspace/T5 limits explicitly outside this ledger.
+- Expose taxi-v1 scene-to-text conditioning as an explicit optional mode; do not silently replace arbitrary prompts with the restricted taxi grammar. All neural denoising remains FULL; failed action adherence is not declared fixed by symbolic replay.

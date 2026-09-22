@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/aster-core", "crates/aster-cli", "crates/aster-candle"]
+exclude = ["integrations/ltx"]
 resolver = "3"
 
 [workspace.package]

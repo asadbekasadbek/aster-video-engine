@@ -56,6 +56,52 @@ fn cli_contract() {
 }
 
 #[test]
+fn text_planning_and_no_fake_generation() {
+    let prompt = aster_core::planner::TAXI_PROMPT;
+    let output = run(&["plan", "--prompt", prompt]);
+    assert!(output.status.success(), "{:?}", output);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("action=enter") && text.contains("action=depart"));
+    assert_eq!(text.matches("generation_mode=Full").count(), 6);
+    assert!(text.contains("neural_inference=false"));
+    assert!(!run(&["plan", "--prompt", "A dog swims"]).status.success());
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-artifacts");
+    std::fs::create_dir_all(&directory).unwrap();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let source = directory.join(format!("prompt-{}-{nonce}.txt", std::process::id()));
+    std::fs::write(&source, prompt).unwrap();
+    let from_file = run(&["plan", "--prompt-file", source.to_str().unwrap()]);
+    assert!(from_file.status.success());
+    assert_eq!(String::from_utf8(from_file.stdout).unwrap(), text);
+    let destination = source.with_extension("mp4");
+    let generation = run(&[
+        "generate",
+        "--prompt",
+        "My own original scene",
+        "--output",
+        destination.to_str().unwrap(),
+    ]);
+    assert!(!generation.status.success());
+    assert!(generation.stdout.is_empty());
+    assert!(
+        String::from_utf8(generation.stderr)
+            .unwrap()
+            .contains("code=backend_unavailable")
+    );
+    assert!(!destination.exists());
+    std::fs::write(&source, vec![b'x'; 16385]).unwrap();
+    assert!(
+        !run(&["plan", "--prompt-file", source.to_str().unwrap()])
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn model_inspection_and_media_no_overwrite() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/test-artifacts")

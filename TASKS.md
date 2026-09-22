@@ -25,3 +25,36 @@ For each task add acceptance criteria and evidence before checking it off. Appen
 - M1.2: strict help/device/synthetic CLI, stable error codes, unit/integration tests and CI workflow; fmt/clippy/workspace tests pass.
 - M2.1: deterministic streaming temporal f32 prototype, checked sizes and memory budget, cancellation, process peak working-set measurement on Windows; reproducible release workload/checksum, reject invalid/overflow/budget inputs; report GPU metrics as unavailable for CPU workload.
 
+
+## Priority override — world architecture (2026-09-22)
+Existing completed tasks remain valid. Work in this order before blocked M3 downloads:
+- [x] W1 Bounded world state and atomic events. Acceptance: unique stable IDs/appearance; deterministic object order; strictly increasing ticks; no partial mutation on unknown/duplicate participants; unchanged objects preserved; history eviction and hard limits tested; fmt/clippy/workspace tests pass.
+- [x] W2 Add camera/light/environment and bounded relationships; restricted taxi text planner with explicit unsupported-input errors. Test event order, same actor/vehicle identity, door/contact/containment transitions and deterministic replay. Do not present a template grammar as general NLP.
+- [ ] W3 Change reports with old/new bounds, interaction closure and conservative camera/light invalidation; mode selection with backend capability fallback; test all four modes and unknown effects.
+- [ ] W4 Rust synthetic adaptive/full renderer comparison, CLI scene trace and media path. Same workload/seed must produce identical frames; measure actual reused/computed pixels, time and RAM. No neural speedup claims.
+- [ ] W5 Audit and implement approved neural conditioning/masking/cache path; depends on separate dependency/weights/license approval. Actual AI output and quality evidence required.
+- [ ] W6 Integrated MP4, resource residency scheduler and paired neural metrics; do not mark complete from synthetic tests.
+## 2026-09-22 implementation checkpoint and inference priority
+- [x] W2 Restricted Russian taxi planner + CLI --prompt/--prompt-file, camera/light/environment revisions, bounded relationships, explicit implicit approach/door close and unknown-action/order errors. World and deterministic replay tests pass.
+- [x] W3a Change set + old/new influence union + relationship closure; four-mode policy guarded by exact cache conditioning and backend capabilities. Missing visual influence information forces FULL. Synthetic projection/rendering and measured reuse remain W3/W4 unfinished.
+- [x] W6a Residency ledger with SSD/RAM/VRAM budgets, adjacent transfer callbacks, simultaneous source/destination/workspace accounting and rollback tests. Actual model offload/VRAM enforcement remains unfinished.
+- [x] M4.2 Native MP4 adapter: stream ordered RGB8 frames into explicitly selected existing FFmpeg; no overwrite, child cleanup, H.264 decode/metadata verification. Encoder test is synthetic and NOT AI output.
+- [ ] W5.1 APPROVAL REQUIRED: pinned LTX Rust/CUDA dependency build, CUDA 12.6.3 Toolkit-only installation, LTX license acceptance and 9.73 GB weights/tokenizer manifest. Exact request: docs/ltx-inference-approval.md. No download/install has occurred.
+- [ ] W5.2 After approved numerical CUDA probe, stage model components and connect actual LTX inference to generate CLI and MP4. Measure RAM/VRAM/time, evaluate own English text and taxi sequence visually. Current generate returns backend_unavailable without creating output.
+
+The user's latest priority is real text-to-video after approval; W4 synthetic renderer is no longer a prerequisite for W5. Keep W3/W4 research open without postponing approved inference to add further test animations.
+## 2026-09-23 authorization and execution update
+- [x] W5.1a User approved CUDA, pinned model downloads and LTX license. Toolkit installed without driver update; Rust CUDA release build and numerical GPU probe passed.
+- [ ] W5.1b Complete active weight downloads and verify pinned SHA256 values.
+- [ ] W5.2 Execute native Rust model, reject non-finite decoded values, export and inspect real MP4; record actual memory/time. CLI worker forwarding implemented; model test still pending.
+
+- [x] W5.1b Approved downloads complete; native worker verified both model SHA256 values before entering T5. CUDA-feature strict release clippy also passed.
+
+- [x] W5.2a Native Rust arbitrary text -> real LTX inference -> finite frames -> MP4, independently decoded and visually inspected. First experiment25frames; exact memory/time in PROGRESS.
+- [ ] W5.2b Longer hail/enter taxi semantic test (121frames) and inspection, then connect world/residency policies to measured model computation.
+
+- [x] W6b Connect residency budget validation to real RAM->VRAM weight transfers; typed backend failure rollback test, live LTX replay and exact decoded-frame parity. Scope/metrics in PROGRESS; full model residency and workspace budgeting remain open.
+- [ ] W5.2b Taxi semantic acceptance remains FAILED despite valid AI MP4. Wire restricted scene state/event conditioning next; do not claim text requests enforce identity/actions.
+
+- [x] W5.3a Restricted planner->World State replay->change decisions->whole-clip neural text conditioning wired and executed. Semantic action test remains FAILED; does not implement per-event neural scheduling or identity binding.
+- [ ] W5.3b Exact T5 conditioning cache: bounded storage, model/tokenizer/version/prompt invalidation, corrupt-cache rejection, paired real inference with identical decoded frames and measured time. This only skips unchanged text encoding, not video denoising.

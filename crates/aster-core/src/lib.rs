@@ -1,7 +1,12 @@
 //! Bounded CPU reference pipeline. No model inference or GPU backend is implied.
+pub mod adaptive;
 pub mod memory;
 pub mod model;
+pub mod mp4;
+pub mod planner;
+pub mod residency;
 pub mod video;
+pub mod world;
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +14,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
+    BackendUnavailable(&'static str),
     Invalid(&'static str),
     Overflow,
     Budget { required: usize, limit: usize },
@@ -19,6 +25,7 @@ pub enum Error {
 impl Error {
     pub fn code(&self) -> &'static str {
         match self {
+            Self::BackendUnavailable(_) => "backend_unavailable",
             Self::Invalid(_) => "invalid_input",
             Self::Overflow => "size_overflow",
             Self::Budget { .. } => "memory_budget",
@@ -31,6 +38,7 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BackendUnavailable(message) => f.write_str(message),
             Self::Invalid(message) => f.write_str(message),
             Self::Overflow => f.write_str("shape or work size overflow"),
             Self::Budget { required, limit } => {
@@ -286,3 +294,4 @@ mod tests {
         assert_eq!(c.validate().unwrap().1, 131_072);
     }
 }
+pub mod conditioning;

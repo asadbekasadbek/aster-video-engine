@@ -1,0 +1,24 @@
+[package]
+name = "aster-ltx"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+candle-video = { git = "https://github.com/FerrisMind/candle-video", rev = "ebe43c414d2519535357113cad22d15fba0ce900", default-features = false }
+candle-core = { git = "https://github.com/FerrisMind/candle", branch = "wgpu/vulkan", default-features = false }
+candle-nn = { git = "https://github.com/FerrisMind/candle", branch = "wgpu/vulkan", default-features = false }
+aster-core = { path = "../../crates/aster-core" }
+safetensors = "=0.8.0"
+tokenizers = "=0.23.2"
+sha2 = "=0.10.9"
+
+[features]
+default = []
+cuda = ["candle-video/cuda", "candle-core/cuda"]
+
+[[bin]]
+name = "aster-ltx"
+path = "src/main.rs"

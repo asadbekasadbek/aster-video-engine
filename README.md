@@ -10,7 +10,7 @@ Goal: build a modular, measurable, cross-platform AI video-generation engine. De
 5. Build, test, benchmark where applicable, review, document and checkpoint progress. Repeat.
 
 ## Current implementation
-`aster-core` implements a bounded deterministic CPU temporal tensor reference, Windows process peak working-set telemetry, SafeTensors header inspection and a streaming YUV4MPEG2 writer. `aster-candle` tests pinned Candle 0.11.0 CPU matrix multiplication and automatic differentiation against scalar references. `aster-cli` exposes these through the commands below. No weights or Python; CUDA and pretrained model inference are not implemented. Research and provisional decisions are in RESEARCH.md and DECISIONS.md.
+`aster-core` implements bounded world state, change policies, residency accounting, CPU tensor references, Windows memory telemetry, SafeTensors inspection and media export. `aster-candle` preserves the Candle 0.11.0 CPU baseline. Native Rust LTX inference now produces real MP4 on Windows/RTX4070 without Python. A 25-frame taxi clip passed independent decode and visual inspection; the longer hail/enter action sequence failed semantic acceptance. Build/run instructions and limitations are in [integrations/ltx/README.md](integrations/ltx/README.md).
 
 ## Build and run (Windows MSVC Rust 1.98.1)
 ```powershell
@@ -33,9 +33,28 @@ The core callback receives one CHW frame synchronously; retaining copies is outs
 
 `inspect` reads at most a 1 MiB header, validates shapes/dtypes/contiguous offsets and file extent without loading tensor payload. Limits: 4096 tensors, 4096 bytes/name, rank 32. Parsed metadata adds bounded overhead above the header byte count. It does not verify payload hashes, approve model provenance, or execute a graph. Inspect immutable files only; concurrent modification is not a supported snapshot mechanism.
 
-`demo-video` writes a fixed synthetic moving square: 320x180, 48 frames, 24 fps, 2 seconds. The Rust writer creates uncompressed full-range YUV420 Y4M. Existing files are never overwritten; an I/O failure may leave a partial file and returns failure. FFmpeg is only an external validation/preview tool, not required by the engine. Artifacts are ignored by Git and reproducible. This is not AI-generated media.
+`demo-video` writes a fixed synthetic moving square: 320x180, 48 frames, 24 fps, 2 seconds. The Rust writer creates uncompressed full-range YUV420 Y4M. Existing files are never overwritten; an I/O failure may leave a partial file and returns failure. The Y4M path does not require FFmpeg. The separate MP4 adapter below uses an explicitly selected installed FFmpeg executable. Artifacts are ignored by Git and reproducible. This is not AI-generated media.
 
 Dependencies were explicitly authorized for SafeTensors/serde and Candle CPU. Exact versions/checksums are in Cargo.lock, declarations in docs/dependency-licenses.md. Native C Oniguruma is a Candle tokenizer transitive dependency compiled by the existing MSVC toolchain; no Python runtime or system installation. GPU dependencies and model weights need separate approval. Candidate weight inventory: docs/sd15-candidate-manifest.md.
 
 ## Success is evidence-based
 An empty skeleton is not a video generator. A complete engine must pass the acceptance tests in SPEC.md. Claims of 1080p, speed, quality, or training are prohibited without reproducible measurements and artifacts.
+
+World architecture includes bounded state/relationships, a restricted taxi CLI planner, conservative change detection and generation policy. Residency checks now gate actual RAM-to-VRAM weight transfers. Optional `--planner taxi-v1` converts replayed events into whole-clip neural text conditioning. Spatial selective compute reuse and neural identity control are not implemented. Revised milestones and evidence are in SPEC/ROADMAP/TASKS.
+
+## Text scenario CLI (2026-09-23)
+```powershell
+.\target\release\aster.exe plan --prompt "Человек стоит на улице, останавливает такси, открывает дверь и садится в машину. Такси уезжает"
+.\target\release\aster.exe plan --prompt-file examples/taxi.txt
+```
+This is a restricted Russian grammar: initial street sentence, hail, optional explicit taxi approach, open door, enter car, optional close door, taxi departure. Clauses can use commas, periods, semicolons, line breaks or the conjunction `и`. Approach/door-close are inserted if omitted and reported as planner defaults. Unknown actions/order fail. Output reports 4 objects, 6 default events and FULL decisions because no renderer influence bounds exist. It does not produce video.
+
+`aster generate --prompt TEXT --output NEW.mp4` (or --prompt-file PATH) forwards validated text to a native LTX worker. Supply `--worker`, `--models` and `--ffmpeg` as documented in the integration README. Missing worker or failed inference returns an error; there is no substitute-media success path. The downloads and license in docs/ltx-inference-approval.md have been explicitly approved.
+
+`aster_core::mp4::encode` accepts ordered RGB8 frames and a path to installed FFmpeg, producing H.264 fragmented MP4. The LTX worker calls it after decoding and validating model output; that complete path has passed real model execution and independent decoding. Standard tests do not require FFmpeg; the native integration test can be run explicitly:
+```powershell
+$env:ASTER_TEST_FFMPEG = 'C:\OSPanel\modules\php\php_8.2\ffmpeg.exe'
+$env:ASTER_TEST_FFPROBE = 'C:\OSPanel\modules\php\php_8.2\ffprobe.exe'
+cargo test -p aster-core --test mp4 --locked --offline -- --ignored --nocapture
+```
+The residency manager gates weight transfers during component loading; it does not yet manage activation/workspace allocation, T5, or complete tensor lifetimes. Adaptive spatial modes are decision policy only, with neural partial generation disabled.
