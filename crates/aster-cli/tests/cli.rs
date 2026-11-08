@@ -31,6 +31,20 @@ fn cli_contract() {
         vec!["device", "extra"],
         vec!["synthetic", "--seed", "1", "--seed", "2"],
         vec!["synthetic", "--budget-mib", "0"],
+        vec!["control"],
+        vec![
+            "control",
+            "--worker",
+            "missing-worker",
+            "--models",
+            "missing-models",
+            "--run-dir",
+            "unused",
+            "--ffmpeg",
+            "missing",
+            "--stage",
+            "14",
+        ],
     ] {
         let output = run(&args);
         assert!(!output.status.success());
@@ -93,6 +107,28 @@ fn text_planning_and_no_fake_generation() {
             .contains("code=backend_unavailable")
     );
     assert!(!destination.exists());
+    for extra in [
+        vec!["--reuse", "maybe"],
+        vec!["--planner", "taxi-v1"],
+        vec!["--reuse", "on", "--reuse", "off"],
+    ] {
+        let mut args = vec![
+            "sequence",
+            "--prompt",
+            aster_core::planner::CONTROL_PROMPT,
+            "--output",
+            destination.to_str().unwrap(),
+        ];
+        args.extend(extra);
+        let failed = run(&args);
+        assert!(!failed.status.success());
+        assert!(
+            String::from_utf8(failed.stderr)
+                .unwrap()
+                .contains("code=invalid_input")
+        );
+        assert!(!destination.exists());
+    }
     std::fs::write(&source, vec![b'x'; 16385]).unwrap();
     assert!(
         !run(&["plan", "--prompt-file", source.to_str().unwrap()])

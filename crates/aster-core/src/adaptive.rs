@@ -44,7 +44,9 @@ pub fn detect(
     for object in before.objects().iter().chain(after.objects()) {
         let old = before.objects().iter().find(|o| o.id == object.id);
         let new = after.objects().iter().find(|o| o.id == object.id);
-        if old != new && !ids.contains(&object.id) {
+        if (old != new || before.state(object.id) != after.state(object.id))
+            && !ids.contains(&object.id)
+        {
             ids.push(object.id);
         }
     }

@@ -1,5 +1,6 @@
 //! Bounded CPU reference pipeline. No model inference or GPU backend is implied.
 pub mod adaptive;
+pub mod interaction;
 pub mod memory;
 pub mod model;
 pub mod mp4;
@@ -295,3 +296,4 @@ mod tests {
     }
 }
 pub mod conditioning;
+pub mod continuity;

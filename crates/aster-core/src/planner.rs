@@ -4,6 +4,7 @@ use crate::world::{Globals, Kind, Object, ObjectId, Pose, Relation, RelationKind
 
 pub const MAX_PROMPT_BYTES: usize = 16 * 1024;
 pub const TAXI_PROMPT: &str = "Человек стоит на улице, останавливает такси, открывает дверь и садится в машину. Такси уезжает";
+pub const CONTROL_PROMPT: &str = "Человек стоит на улице, поднимает руку и останавливает жёлтое такси. Такси подъезжает и останавливается. Человек открывает заднюю дверь, садится в машину. Такси уезжает";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
@@ -38,7 +39,19 @@ pub fn validate_prompt(prompt: &str) -> Result<(), Error> {
 /// Coordinates and timing are explicit planner defaults, not inferred physical truth.
 pub fn plan(prompt: &str) -> Result<Plan, Error> {
     validate_prompt(prompt)?;
-    let normalized = prompt.to_lowercase().replace(" и ", ",");
+    let normalized = prompt
+        .to_lowercase()
+        .replace(" и ", ",")
+        .replace(
+            "поднимает руку,останавливает жёлтое такси",
+            "останавливает такси",
+        )
+        .replace(
+            "поднимает руку,останавливает желтое такси",
+            "останавливает такси",
+        )
+        .replace("такси подъезжает,останавливается", "такси подъезжает")
+        .replace("открывает заднюю дверь", "открывает дверь");
     let clauses: Vec<_> = normalized
         .split([',', '.', ';', '\n'])
         .map(str::trim)
@@ -255,6 +268,15 @@ mod tests {
                 .iter()
                 .any(|r| r.kind == RelationKind::Inside)
         );
+    }
+    #[test]
+    fn control_scenario_has_same_six_ordered_state_transitions() {
+        let detailed = plan(CONTROL_PROMPT).unwrap();
+        let original = plan(TAXI_PROMPT).unwrap();
+        assert_eq!(detailed.events, original.events);
+        assert_eq!(detailed.world, original.world);
+        assert_eq!(detailed.prompt, CONTROL_PROMPT);
+        assert!(plan(&CONTROL_PROMPT.replace("жёлтое такси", "красный автобус")).is_err());
     }
     #[test]
     fn rejects_unknown_missing_reordered_and_oversized_text() {

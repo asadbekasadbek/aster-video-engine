@@ -12,6 +12,12 @@ Backend check: aster backend-smoke (Candle CPU matmul and autodiff).\n\
 Scene planning: aster plan --prompt TEXT | --prompt-file PATH (restricted taxi grammar).\n\
 Generation: aster generate --prompt TEXT|--prompt-file PATH --output NEW.mp4 \
 [--worker PATH] [--models DIR] [--ffmpeg PATH] [--frames N] [--planner taxi-v1].\n\
+Event experiment: aster sequence --prompt TEXT|--prompt-file PATH --output NEW.mp4 \
+[--worker PATH] [--models DIR] [--ffmpeg PATH] [--frames N] [--reuse on|off] \
+[--events 0..6] [--seed N] (restricted taxi grammar; frames per segment).\n\
+Checked taxi: aster control --worker PATH --models DIR --run-dir DIR --ffmpeg PATH --stage 0..13.\n\
+Accepted export: aster control-export --worker PATH --run-dir DIR --ffmpeg PATH --output NEW.mp4 --stages 1..14.\n\
+Quality: aster quality --prompt TEXT|--prompt-file PATH --output NEW.mp4 [--worker PATH] [--models DIR] [--ffmpeg PATH] [--profile legacy|corrected|native576|native576-t5-256|reference704|reference704-fullvae|reference704-3s-fullvae|reference960-fullvae|reference960-3s-fullvae|text576-fullvae|text960-fullvae] [--seed N] [--image PATH].\n\
 Output: key=value records; timing includes allocation and checksum.\n";
 
 fn prompt_argument(args: &[String]) -> Result<String, Box<dyn std::error::Error>> {
@@ -41,7 +47,9 @@ fn prompt_argument(args: &[String]) -> Result<String, Box<dyn std::error::Error>
     Ok(prompt)
 }
 
-fn generate(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn generate(args: &[String], mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let sequence = mode == "sequence";
+    let quality = mode == "quality";
     if args.len() < 4
         || args[2] != "--output"
         || !args[3].ends_with(".mp4")
@@ -61,6 +69,11 @@ fn generate(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut ffmpeg = None;
     let mut frames = None;
     let mut planner = None;
+    let mut reuse = "on";
+    let mut events = None;
+    let mut seed = None;
+    let mut profile = None;
+    let mut image = None;
     let mut seen = std::collections::HashSet::new();
     for option in args[4..].as_chunks::<2>().0 {
         if !seen.insert(&option[0]) {
@@ -72,8 +85,31 @@ fn generate(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             "--ffmpeg" => ffmpeg = Some(std::path::PathBuf::from(&option[1])),
             "--frames" => frames = Some(&option[1]),
             "--planner" => planner = Some(option[1].as_str()),
+            "--events" if sequence => events = Some(&option[1]),
+            "--seed" if sequence || quality => seed = Some(&option[1]),
+            "--profile" if quality => profile = Some(&option[1]),
+            "--image" if quality => image = Some(&option[1]),
+            "--reuse" if sequence => {
+                reuse = option[1].as_str();
+                if reuse != "on" && reuse != "off" {
+                    return Err(Box::new(Error::Invalid("reuse must be on|off")));
+                }
+            }
             _ => return Err(Box::new(Error::Invalid("unknown generate option"))),
         }
+    }
+    if sequence {
+        if planner.is_some() {
+            return Err(Box::new(Error::Invalid(
+                "sequence uses its own event planner",
+            )));
+        }
+        aster_core::planner::plan(&prompt)?;
+    }
+    if quality && planner.is_some() {
+        return Err(Box::new(Error::Invalid(
+            "quality trial uses raw prompt, not event planner",
+        )));
     }
     if let Some(planner) = planner {
         if planner != "taxi-v1" {
@@ -116,12 +152,32 @@ fn generate(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         ))?;
     let mut command = std::process::Command::new(worker);
     command
-        .args(["generate", "--prompt", &prompt, "--models"])
+        .args([mode, "--prompt", &prompt, "--models"])
         .arg(models)
         .args(["--output", &args[3], "--ffmpeg"])
         .arg(ffmpeg);
     if let Some(frames) = frames {
         command.args(["--frames", frames]);
+    }
+    if sequence {
+        command.args(["--reuse", reuse]);
+        if let Some(events) = events {
+            command.args(["--events", events]);
+        }
+        if let Some(seed) = seed {
+            command.args(["--seed", seed]);
+        }
+    }
+    if quality {
+        if let Some(seed) = seed {
+            command.args(["--seed", seed]);
+        }
+        if let Some(profile) = profile {
+            command.args(["--profile", profile]);
+        }
+        if let Some(image) = image {
+            command.args(["--image", image]);
+        }
     }
     // CUDA DLL discovery is explicit for this tested Windows toolkit; no install
     // or CPU fallback occurs here. CUDA_PATH can select another installed toolkit.
@@ -144,6 +200,24 @@ fn generate(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("LTX inference failed: {status}").into());
     }
     Ok(())
+}
+
+fn checked_worker(worker: &str) -> Result<std::process::Command, Box<dyn std::error::Error>> {
+    let command = std::process::Command::new(worker);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        let cuda = std::env::var_os("CUDA_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6".into());
+        let mut paths = vec![cuda.join("bin")];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        command.env("PATH", std::env::join_paths(paths)?);
+        command
+    };
+    Ok(command)
 }
 
 fn config(args: &[String]) -> Result<Config, Error> {
@@ -179,6 +253,40 @@ fn config(args: &[String]) -> Result<Config, Error> {
 
 fn execute(args: &[String], out: &mut impl Write) -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
+        Some("control-export") => {
+            if args.len() != 11 || args[1] != "--worker" {
+                return Err(Box::new(Error::Invalid(
+                    "control-export --worker PATH --run-dir DIR --ffmpeg PATH --output NEW.mp4 --stages 1..14",
+                )));
+            }
+            let status = checked_worker(&args[2])?
+                .arg("control-export")
+                .args(&args[3..])
+                .status()?;
+            if !status.success() {
+                return Err(format!("reviewed export failed: {status}").into());
+            }
+        }
+        Some("control") => {
+            if args.len() != 11
+                || args[1] != "--worker"
+                || args[3] != "--models"
+                || args[5] != "--run-dir"
+                || args[7] != "--ffmpeg"
+                || args[9] != "--stage"
+            {
+                return Err(Box::new(Error::Invalid(
+                    "control --worker PATH --models DIR --run-dir DIR --ffmpeg PATH --stage 0..13",
+                )));
+            }
+            aster_core::interaction::expected(args[10].parse()?)?;
+            let mut command = checked_worker(&args[2])?;
+            command.arg("control").args(&args[3..]);
+            let status = command.status()?;
+            if !status.success() {
+                return Err(format!("checked transition failed: {status}").into());
+            }
+        }
         Some("plan") => {
             let prompt = prompt_argument(&args[1..])?;
             let mut plan = aster_core::planner::plan(&prompt)?;
@@ -223,7 +331,13 @@ fn execute(args: &[String], out: &mut impl Write) -> Result<(), Box<dyn std::err
             }
         }
         Some("generate") => {
-            generate(&args[1..])?;
+            generate(&args[1..], "generate")?;
+        }
+        Some("sequence") => {
+            generate(&args[1..], "sequence")?;
+        }
+        Some("quality") => {
+            generate(&args[1..], "quality")?;
         }
         None | Some("help" | "--help" | "-h") if args.len() <= 1 => write!(out, "{HELP}")?,
         Some("device") if args.len() == 1 => {

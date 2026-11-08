@@ -29,6 +29,43 @@ pub enum RelationKind {
     PartOf,
     Contact,
     Inside,
+    NearDoor,
+    HandNearHandle,
+    OccludedBy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DoorState {
+    Closed,
+    Opening,
+    Open,
+    Closing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersonState {
+    Standing,
+    Hailing,
+    Walking,
+    AtDoor,
+    Grasping,
+    Entering,
+    Seated,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VehicleState {
+    Waiting,
+    Approaching,
+    Stopped,
+    Departing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectState {
+    Door(DoorState),
+    Person(PersonState),
+    Vehicle(VehicleState),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,9 +107,16 @@ pub struct Snapshot {
     objects: Vec<Object>,
     relations: Vec<Relation>,
     globals: Globals,
+    states: Vec<(ObjectId, ObjectState)>,
 }
 
 impl Snapshot {
+    pub fn state(&self, id: ObjectId) -> Option<ObjectState> {
+        self.states
+            .iter()
+            .find(|(key, _)| *key == id)
+            .map(|(_, value)| *value)
+    }
     pub fn relations(&self) -> &[Relation] {
         &self.relations
     }
@@ -89,7 +133,7 @@ impl Snapshot {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
     current: Snapshot,
     history: VecDeque<Snapshot>,
@@ -112,6 +156,7 @@ impl World {
                 objects,
                 relations: Vec::new(),
                 globals: Globals::default(),
+                states: Vec::new(),
             },
             history: VecDeque::new(),
             history_limit,
@@ -124,6 +169,67 @@ impl World {
 
     pub fn history(&self) -> &VecDeque<Snapshot> {
         &self.history
+    }
+
+    /// Explicit states are opt-in, preserving the legacy symbolic planner.
+    /// State and relation/pose updates commit atomically, including history.
+    pub fn apply_states(
+        &mut self,
+        tick: u64,
+        updates: &[Update],
+        relations: &[Relation],
+        states: &[(ObjectId, ObjectState)],
+    ) -> Result<(), Error> {
+        if states.len() > MAX_OBJECTS {
+            return Err(Error::Invalid("state limit exceeded"));
+        }
+        let mut next = self.clone();
+        for (index, &(id, state)) in states.iter().enumerate() {
+            let object = self
+                .current
+                .objects
+                .iter()
+                .find(|o| o.id == id)
+                .ok_or(Error::Invalid("unknown state participant"))?;
+            if states[..index].iter().any(|(key, _)| *key == id)
+                || !matches!(
+                    (object.kind, state),
+                    (Kind::Door, ObjectState::Door(_))
+                        | (Kind::Person, ObjectState::Person(_))
+                        | (Kind::Vehicle, ObjectState::Vehicle(_))
+                )
+            {
+                return Err(Error::Invalid("duplicate or wrong-kind state"));
+            }
+            if let ObjectState::Door(new) = state {
+                let old = match self.current.state(id) {
+                    Some(ObjectState::Door(old)) => old,
+                    _ => DoorState::Closed,
+                };
+                if old != new
+                    && !matches!(
+                        (old, new),
+                        (DoorState::Closed, DoorState::Opening)
+                            | (DoorState::Opening, DoorState::Open)
+                            | (DoorState::Open, DoorState::Closing)
+                            | (DoorState::Closing, DoorState::Closed)
+                    )
+                {
+                    return Err(Error::Invalid("invalid door transition"));
+                }
+            }
+        }
+        next.apply_scene(tick, updates, Some(relations), None)?;
+        for &(id, value) in states {
+            if let Some(entry) = next.current.states.iter_mut().find(|(key, _)| *key == id) {
+                entry.1 = value;
+            } else {
+                next.current.states.push((id, value));
+            }
+        }
+        next.current.states.sort_by_key(|(id, _)| id.0);
+        *self = next;
+        Ok(())
     }
 
     /// All participants change together. Invalid events leave state/history intact.

@@ -1,0 +1,3 @@
+[alias]
+aster-train = "run --locked --release --manifest-path integrations/ltx/Cargo.toml --example teacher_pilot -- starter"
+aster-apply = "run --locked --release --manifest-path integrations/ltx/Cargo.toml --example teacher_pilot -- apply"

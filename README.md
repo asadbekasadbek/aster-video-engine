@@ -2,6 +2,10 @@
 
 Goal: build a modular, measurable, cross-platform AI video-generation engine. Development host: Windows, RTX 4070 12 GB VRAM, 64 GB RAM. Rust is the only project implementation language; native GPU drivers, system libraries and model files may be external dependencies. No Python scripts, Python inference servers or Python training pipelines.
 
+## Обучение после git clone
+
+Из корня репозитория запустите `cargo aster-train`. Команда обучает CPU-модуль обработки кадров на комплектном наборе и применяет сохранённые веса к проверочному видео. Нужны Rust/Cargo, системный инструментарий сборки и FFmpeg в PATH. [Команды для обучения и обработки своего ролика](docs/student-training-ru.md)
+
 ## Start here
 1. Read `AGENTS.md`, `SPEC.md`, `ROADMAP.md`, `TASKS.md`, `PROGRESS.md`, `DECISIONS.md`.
 2. Inspect the host with safe read-only commands; check `rustc`, `cargo`, `git`, `nvidia-smi`, free disk and available GPU backends.
@@ -58,3 +62,15 @@ $env:ASTER_TEST_FFPROBE = 'C:\OSPanel\modules\php\php_8.2\ffprobe.exe'
 cargo test -p aster-core --test mp4 --locked --offline -- --ignored --nocapture
 ```
 The residency manager gates weight transfers during component loading; it does not yet manage activation/workspace allocation, T5, or complete tensor lifetimes. Adaptive spatial modes are decision policy only, with neural partial generation disabled.
+
+Experimental `aster sequence` connects world/change decisions to real previous-frame VAE conditioning. Join discontinuity improves in the measured ablation, but door opening, entry and visual identity remain unverified/failed; no transformer compute is saved. See [temporal reference measurements](docs/temporal-reference-benchmark.md).
+
+`aster control` adds evidence-gated taxi microtransitions with explicit door/person/vehicle states and nine-frame neural video-prefix conditioning. It retains canonical appearance evidence; visual reviews are external/manual, not an automatic action model. `control-export` assembles only accepted stages. Current trial stops at failed taxi stopping/geometry; full scenario remains incomplete. See [checked interaction report](docs/checked-interaction-benchmark.md).
+# Current priority: one-second visual quality
+
+Use `aster quality` for bounded real 25-frame LTX trials. See
+[quality comparison](docs/quality-baseline.md) for the reproducible command,
+five generated clips, settings and measurements. The photorealism acceptance
+criterion is **not yet met**. World/action and efficiency work is deferred.
+
+Windows x64 CPU student training: see [Russian quick start](docs/student-training-ru.md).

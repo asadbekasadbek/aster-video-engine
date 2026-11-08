@@ -1,5 +1,8 @@
 use candle_core::{Device, Tensor};
 mod inference;
+mod quality;
+mod reference;
+mod restore;
 mod telemetry;
 mod weights;
 
@@ -48,23 +51,99 @@ fn probe(device: &Device) -> candle_core::Result<f32> {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if (args.len() == 9 || (args.len() == 11 && args[9] == "--frames"))
-        && args[0] == "generate"
+    if args.first().map(String::as_str) == Some("teacher-target") {
+        return restore::prepare(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("restore-glance") {
+        return restore::run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("control") {
+        return reference::controlled::run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("control-export") {
+        return reference::controlled::export(&args[1..]);
+    }
+    if args.len() >= 9
+        && args.len() % 2 == 1
+        && matches!(args[0].as_str(), "generate" | "sequence" | "quality")
         && args[1] == "--prompt"
         && args[3] == "--models"
         && args[5] == "--output"
         && args[7] == "--ffmpeg"
     {
+        let mut frames = 25;
+        let mut reuse = true;
+        let mut events = 6;
+        let mut seed = 42;
+        let mut profile = "corrected";
+        let mut image = None;
+        let mut seen = std::collections::HashSet::new();
+        for pair in args[9..].as_chunks::<2>().0 {
+            if !seen.insert(&pair[0]) {
+                return Err("duplicate worker option".into());
+            }
+            match pair[0].as_str() {
+                "--frames" => frames = pair[1].parse()?,
+                "--events" if args[0] == "sequence" => events = pair[1].parse()?,
+                "--seed" if args[0] == "sequence" || args[0] == "quality" => {
+                    seed = pair[1].parse()?
+                }
+                "--profile" if args[0] == "quality" => profile = &pair[1],
+                "--image" if args[0] == "quality" => image = Some(std::path::Path::new(&pair[1])),
+                "--reuse" if args[0] == "sequence" => {
+                    reuse = match pair[1].as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("reuse must be on|off".into()),
+                    }
+                }
+                _ => return Err("unknown worker option".into()),
+            }
+        }
+        if args[0] == "quality" {
+            if seen.iter().any(|flag| flag.as_str() == "--frames")
+                && frames
+                    != (if matches!(
+                        profile,
+                        "reference704-3s-fullvae" | "reference960-3s-fullvae"
+                    ) {
+                        73
+                    } else {
+                        25
+                    })
+            {
+                return Err("frame count conflicts with quality profile".into());
+            }
+            return quality::generate(
+                &args[2],
+                args[4].as_ref(),
+                args[6].as_ref(),
+                args[8].as_ref(),
+                profile,
+                seed,
+                image,
+            );
+        }
+        if args[0] == "sequence" {
+            return reference::scene::generate(
+                &args[2],
+                args[4].as_ref(),
+                args[6].as_ref(),
+                args[8].as_ref(),
+                reference::scene::Options {
+                    frames,
+                    reuse,
+                    events,
+                    seed,
+                },
+            );
+        }
         return inference::generate(
             &args[2],
             args[4].as_ref(),
             args[6].as_ref(),
             args[8].as_ref(),
-            if args.len() == 11 {
-                args[10].parse()?
-            } else {
-                25
-            },
+            frames,
         );
     }
     let device = match args.as_slice() {

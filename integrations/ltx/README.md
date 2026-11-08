@@ -73,3 +73,92 @@ exactly. Build work overlapped the residency run: no performance improvement
 claim is made. Both long scene tests failed action adherence on visual
 inspection. These measurements are a first-pass-only baseline, not a claim of
 official pipeline parity, training quality, or general model correctness.
+
+## Temporal reference experiment
+
+`sequence` applies World State events and lets change detection invalidate a
+previous-frame reference before real VAE encoding and per-token denoising.
+It uses the same approved weights; no Python or extra model is needed.
+
+```powershell
+.\target\release\aster.exe sequence --prompt-file examples/taxi-control.txt --output artifacts/my-taxi-sequence.mp4 --worker target/ltx/release/aster-ltx.exe --models models/ltx-0.9.8-2b --ffmpeg C:\OSPanel\modules\php\php_8.2\ffmpeg.exe --frames 49 --reuse on --seed 43
+```
+
+`--frames` is per segment. Initial + six events gives 337 frames at 49;
+`--events 0` probes only the initial scene. `--reuse off` runs independent
+segments for comparison. Seed defaults to 42 and increments per segment.
+The parser accepts only the documented taxi grammar, not arbitrary stories.
+This is temporal conditioning, not spatially selective computation. All tokens
+still pass through the transformer. The v1 paired experiment reduced join MAE
+82.05%, with no transformer work saved and segment time increased 2.58%.
+The v2 clip raises the person's arms, but rear-door opening and entry still fail;
+car appearance drifts. See ../../docs/temporal-reference-benchmark.md.
+## Reviewed taxi transitions (experimental control command)
+
+```powershell
+.\target\release\aster.exe control --worker target/ltx/release/aster-ltx.exe --models models/ltx-0.9.8-2b --run-dir artifacts/my-reviewed-taxi --ffmpeg C:\OSPanel\modules\php\php_8.2\ffmpeg.exe --stage 0
+```
+
+This predefined taxi profile has 14 microstages (0..13), 49 generated frames per
+stage, 384x256/24fps, seeds43..56, seven distilled steps. It is not a general
+language planner. Generate/sequence remain available with their previous APIs.
+Each invocation generates one real MP4 and stops awaiting external visual review.
+Nine actual generated frames (stored as bounded finite F32 pixels) are VAE-encoded
+as two hard latent frames for the next accepted stage. The first nine frames in
+later MP4s are overlapping context, not nine new timeline frames.
+
+Before requesting stage N+1, inspect stage N's video against its expected state,
+stage0's canonical appearance reference and the last accepted segment. Write
+stage-NN.review with exactly these fields; replace the hash with the worker's
+manifest_sha256 output, and record honest decisions (pass/fail/unknown):
+
+```text
+manifest_sha256=THE_PRINTED_SHA256
+action=pass
+person=pass
+vehicle=pass
+background=pass
+transition=pass
+reviewer=NAME_OR_EVALUATOR_VERSION
+evidence=Concrete observed actions, identity comparisons and inspected frame indices
+```
+
+The evidence must describe actual visual inspection.
+No existing artifact is overwritten. Failed runs remain for diagnosis; use a new
+run directory for a new experiment. A missing/failed/unknown/stale review blocks
+inference before CUDA initialization. Review is an externally supplied assertion,
+not a cryptographically authenticated reviewer or an automatic vision model.
+Hashes bind video, reference pixels, prompt, settings and expected state to the
+review. Do not mark pass merely because a file was written. Current implementation
+retains canonical evidence for identity comparison; it does NOT inject an
+object-specific learned identity embedding or guarantee physical interactions.
+Export accepted stages only, dropping the nine-frame overlap from later segments:
+
+```powershell
+.\target\release\aster.exe control-export --worker target/ltx/release/aster-ltx.exe --run-dir artifacts/my-reviewed-taxi --ffmpeg C:\OSPanel\modules\php\php_8.2\ffmpeg.exe --output artifacts/my-reviewed-prefix.mp4 --stages 3
+```
+
+The Rust command rechecks all manifests/reviews, reserves a new output and invokes
+native FFmpeg to concatenate/re-encode. It reports partial_scenario until all14
+stages are accepted. It cannot include a failed stage. Manual approval of all
+stages is still external evidence, not automated semantic certification.
+The symbolic positions are planning defaults, not calibrated physical geometry.
+# One-second quality experiments
+
+The opt-in `quality` command preserves historical generation paths. Profiles:
+`legacy`, `corrected` (default), `native576`, `native576-t5-256`; fixed25frames
+at24fps; optional `--seed`. It saves `.params.txt`; capture stdout for sampled
+GPU telemetry. See [audit/results](../../docs/quality-baseline.md). No13B runtime
+compatibility or photorealism acceptance is claimed.
+
+User-photo experiment: `quality --image PATH --profile reference704-fullvae`
+produces25neuralframes at704x384 with a VAE-encoded first-image reference and
+unsplit temporal decoding. It saves reference hash/crop/settings in the sidecar.
+See [photo comparison](../../docs/photo-quality-baseline.md); equal-photo-detail
+acceptance remains open, and this does not validate text-only quality.
+
+Text-only comparisons: use --profile text576-fullvae or text960-fullvae with the same quality command and no --image. Both use the 256-token text encoder setting and decode all 25 frames together. Resolution is native, not a final RGB upscale. A params.txt sidecar records input and inference settings; capture stdout to retain sampled GPU telemetry.
+
+For an exact three-second image-to-video run choose --profile reference704-3s-fullvae and --image PATH. Generate one 73-frame neural sequence at 704x384 and export its first 72 frames at 24fps. No loop, frame duplication or playback-rate adjustment. Static spatial decoder tiles 256/stride192 keep the temporal decode unsplit.
+
+For a native 960x544, three-second image-conditioned clip use --profile reference960-3s-fullvae (same 73 generated/72 exported frames). Reference self-attention evaluates 512 queries at a time against the complete key/value sequence; this does not skip attention or imply a speedup. VAE uses 256px spatial tiles and unsplit time.

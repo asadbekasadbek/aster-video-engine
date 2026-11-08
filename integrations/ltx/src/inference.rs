@@ -14,7 +14,7 @@ use candle_video::{
 };
 use std::{path::Path, time::Instant};
 
-const WEIGHT_LIMIT: usize = 9 * 1024 * 1024 * 1024;
+pub(crate) const WEIGHT_LIMIT: usize = 9 * 1024 * 1024 * 1024;
 pub const WIDTH: usize = 384;
 pub const HEIGHT: usize = 256;
 const FPS: u32 = 24;
@@ -26,7 +26,7 @@ pub fn validate_frames(frames: usize) -> Result<()> {
     Ok(())
 }
 
-fn coordinates(
+pub(crate) fn coordinates(
     frames: usize,
     height: usize,
     width: usize,
@@ -48,22 +48,33 @@ fn coordinates(
     Tensor::from_vec(values, (1, frames * height * width, 3), device)
 }
 
-fn encode_prompt(prompt: &str, models: &Path) -> Result<(Tensor, Tensor)> {
+pub(crate) fn encode_prompt(prompt: &str, models: &Path) -> Result<(Tensor, Tensor)> {
+    encode_prompt_tokens(prompt, models, 128)
+}
+
+pub(crate) fn encode_prompt_tokens(
+    prompt: &str,
+    models: &Path,
+    tokens: usize,
+) -> Result<(Tensor, Tensor)> {
+    if !matches!(tokens, 128 | 256) {
+        return Err("supported T5 lengths:128 or256".into());
+    }
     let mut tokenizer =
         tokenizers::Tokenizer::from_file(models.join("text_encoder_gguf/tokenizer.json"))
             .map_err(|e| e.to_string())?;
     tokenizer.with_truncation(None).map_err(|e| e.to_string())?;
     tokenizer.with_padding(None);
     let encoding = tokenizer.encode(prompt, true).map_err(|e| e.to_string())?;
-    if encoding.len() > 128 {
-        return Err("prompt exceeds the first adapter's 128-token limit".into());
+    if encoding.len() > tokens {
+        return Err("prompt exceeds configured token limit".into());
     }
     let mut ids = encoding.get_ids().to_vec();
     let mut mask = encoding.get_attention_mask().to_vec();
-    ids.resize(128, 0);
-    mask.resize(128, 0);
-    let ids = Tensor::from_vec(ids, (1, 128), &Device::Cpu)?;
-    let mask = Tensor::from_vec(mask, (1, 128), &Device::Cpu)?;
+    ids.resize(tokens, 0);
+    mask.resize(tokens, 0);
+    let ids = Tensor::from_vec(ids, (1, tokens), &Device::Cpu)?;
+    let mask = Tensor::from_vec(mask, (1, tokens), &Device::Cpu)?;
     let model = QuantizedT5EncoderModel::load(
         models.join("text_encoder_gguf/t5-v1_1-xxl-encoder-Q5_K_M.gguf"),
         &Device::Cpu,
@@ -72,14 +83,15 @@ fn encode_prompt(prompt: &str, models: &Path) -> Result<(Tensor, Tensor)> {
     Ok((embeddings, mask.to_dtype(DType::F32)?))
 } // T5 weights released before loading DiT.
 
-fn denoise(
+pub(crate) fn denoise(
     model_path: &Path,
     embeddings: Tensor,
     mask: Tensor,
     device: &Device,
     rng: &mut Pcg32,
-    frames: usize,
+    shape: [usize; 3],
 ) -> Result<Tensor> {
+    let [frames, height, width] = shape;
     let config = presets::v0_9_8_distilled_2b();
     let tensors = weights::load(model_path, false, DType::BF16, device, WEIGHT_LIMIT)?;
     let mut transformer = LtxVideoTransformer3DModel::new(
@@ -99,8 +111,8 @@ fn denoise(
     )?;
     let timesteps = scheduler.timesteps().to_vec1::<f32>()?;
     let latent_f = (frames - 1) / 8 + 1;
-    let latent_h = HEIGHT / 32;
-    let latent_w = WIDTH / 32;
+    let latent_h = height / 32;
+    let latent_w = width / 32;
     let noise = rng.randn((1, 128, latent_f, latent_h, latent_w), device)?;
     let mut latents = LtxPipeline::pack_latents(&noise, 1, 1)?;
     let coords = coordinates(latent_f, latent_h, latent_w, FPS, device)?;
@@ -138,7 +150,35 @@ fn denoise(
     )
 } // DiT weights released before loading VAE; keep only tiny CPU latents.
 
-fn decode(model_path: &Path, latents: Tensor, device: &Device, rng: &mut Pcg32) -> Result<Tensor> {
+pub(crate) fn decode(
+    model_path: &Path,
+    latents: Tensor,
+    device: &Device,
+    rng: &mut Pcg32,
+) -> Result<Tensor> {
+    decode_quality(model_path, latents, device, rng, false)
+}
+
+/// Compatibility wrapper retains the historical path; quality trials use
+/// official normalized-latent noise before VAE denormalization.
+pub(crate) fn decode_quality(
+    model_path: &Path,
+    latents: Tensor,
+    device: &Device,
+    rng: &mut Pcg32,
+    normalized_noise: bool,
+) -> Result<Tensor> {
+    decode_quality_options(model_path, latents, device, rng, normalized_noise, true)
+}
+
+pub(crate) fn decode_quality_options(
+    model_path: &Path,
+    latents: Tensor,
+    device: &Device,
+    rng: &mut Pcg32,
+    normalized_noise: bool,
+    temporal_tiling: bool,
+) -> Result<Tensor> {
     let config = presets::v0_9_8_distilled_2b();
     let tensors = weights::load(model_path, true, DType::BF16, device, WEIGHT_LIMIT)?;
     let mut vae = AutoencoderKLLtxVideo::new(
@@ -147,22 +187,39 @@ fn decode(model_path: &Path, latents: Tensor, device: &Device, rng: &mut Pcg32) 
     )?;
     vae.use_tiling = true;
     vae.use_slicing = true;
-    vae.use_framewise_decoding = true;
+    vae.use_framewise_decoding = temporal_tiling;
+    if !temporal_tiling && latents.dim(2)? == 10 {
+        vae.enable_tiling(Some(256), Some(256), None, Some(192), Some(192), None);
+    }
+    let latents = latents.to_device(device)?;
+    let noise = rng.randn(latents.shape(), device)?;
+    let latents = if normalized_noise {
+        mix_decode_noise(&latents, &noise)?
+    } else {
+        latents
+    };
     let latents = LtxPipeline::denormalize_latents(
-        &latents.to_device(device)?,
+        &latents,
         vae.latents_mean(),
         vae.latents_std(),
         vae.scaling_factor as f32,
     )?;
-    let noise = rng.randn(latents.shape(), device)?;
-    let latents =
-        (latents.affine(0.975, 0.0)? + noise.affine(0.025, 0.0)?)?.to_dtype(DType::BF16)?;
+    let latents = if normalized_noise {
+        latents
+    } else {
+        mix_decode_noise(&latents, &noise)?
+    }
+    .to_dtype(DType::BF16)?;
     let timestep = Tensor::full(0.05_f32, (1,), device)?.to_dtype(DType::BF16)?;
     let (_, video) = vae.decode(&latents, Some(&timestep), false, false)?;
     Ok(video.to_dtype(DType::F32)?.to_device(&Device::Cpu)?)
 }
 
-fn rgb_bytes(values: Vec<f32>) -> std::io::Result<Vec<u8>> {
+pub(crate) fn mix_decode_noise(latents: &Tensor, noise: &Tensor) -> candle_core::Result<Tensor> {
+    latents.affine(0.975, 0.0)? + noise.affine(0.025, 0.0)?
+}
+
+pub(crate) fn rgb_bytes(values: Vec<f32>) -> std::io::Result<Vec<u8>> {
     if values.iter().any(|v| !v.is_finite()) {
         return Err(std::io::Error::other("non-finite VAE output"));
     }
@@ -211,7 +268,14 @@ pub fn generate(
     );
     let mut rng = Pcg32::new(42, 1442695040888963407);
     let stage = Instant::now();
-    let latents = denoise(&weights, embeddings, mask, &device, &mut rng, frames)?;
+    let latents = denoise(
+        &weights,
+        embeddings,
+        mask,
+        &device,
+        &mut rng,
+        [frames, HEIGHT, WIDTH],
+    )?;
     println!(
         "stage=denoise_total elapsed_ms={}",
         stage.elapsed().as_millis()

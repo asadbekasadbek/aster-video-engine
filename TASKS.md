@@ -58,3 +58,64 @@ The user's latest priority is real text-to-video after approval; W4 synthetic re
 
 - [x] W5.3a Restricted planner->World State replay->change decisions->whole-clip neural text conditioning wired and executed. Semantic action test remains FAILED; does not implement per-event neural scheduling or identity binding.
 - [ ] W5.3b Exact T5 conditioning cache: bounded storage, model/tokenizer/version/prompt invalidation, corrupt-cache rejection, paired real inference with identical decoded frames and measured time. This only skips unchanged text encoding, not video denoising.
+
+## 2026-09-28 owner priority: event-conditioned neural continuity
+- [x] W7.1 Exact expanded Russian taxi scenario -> ordered validated events; immutable appearance descriptors and IDs; reject unknown grammar. Tests cover requested sequence.
+- [x] W7.2 Native per-token timestep adapter with parity against existing scalar-time path and malformed-shape tests. Real hard reference tokens must remain unchanged at every denoising step.
+- [ ] W7.3 Event loop: world/change decisions govern reference invalidation and actual VAE-encoded prior-frame conditioning. Compare conditioned vs independent events with same prompts/seeds/frames; report measured boundary errors, operation counts, RAM/VRAM/time and visual event/identity acceptance. Fixed latents alone do not count as saved transformer work.
+
+- [x] W7.1 Exact control scenario and immutable snapshot reference provenance tests pass. Six compound events retained (arm raise+hail, approach+stop, rear-door opening, entry, close, departure).
+- [x] W7.2 Token-time adapter scalar parity, nonuniform-time sensitivity, shape rejection and fixed-prefix invariance tests pass. Actual GPU hard-token invariance is verified in W7.3a.
+
+- [x] W7.3a Real GPU temporal hard reference verified:6VAE anchors,96fixed tokens/step,error0; paired independent/reference337frame clips decoded and measured. Mean joinMAE reduced82.05percent in v1, transformer work unchanged, segment latency +2.58percent. See docs/temporal-reference-benchmark.md.
+- [ ] W7.3b Semantic/identity acceptance FAILED in v1 and v2: v2 raises arms but does not open the door or enter; taxi body drifts. Initial seed43 contains person+taxi. Equal-frame baseline comparison recorded separately. Next: investigate explicit door/body keyframe or pose conditioning compatible with the approved 2B model; do not repeat unbounded prompt/seed trials.
+
+## 2026-10-03 — checked interaction transitions
+- [ ] W8.1 Add explicit typed door/person/vehicle states and spatial relations; atomic invalid-state rejection and change detection tests. Preserve old scene API.
+- [ ] W8.2 Bounded Reference Frame Manager with immutable canonical identity reference, recent accepted reference, hash-bound visual review and fail-closed progression. Do not infer visual success from symbolic state.
+- [ ] W8.3 Real Rust/CUDA stepwise taxi experiment, same49frame/384x256/24fps/seven-step settings as baseline, inspect every transition before next; preserve failures and measure actual outcomes. Full scenario stays incomplete if a gate fails.
+
+- [x] W8.1 Typed states/door chain/spatial relations and atomic state-aware change detection tests passed.
+- [x] W8.2 Canonical/latest reference metadata and hash-bound fail-closed visual review wired to real persisted frames. External manual evaluator only; no automatic recognition or proven neural identity binding. Failed initial reference blocked stage1 in a real CLI check.
+
+- [ ] W8.3 INCOMPLETE after real GPU trials: initial/head crop rejected; v2 standing,raised arm,coarse approach accepted; stop rejected for continued motion/car geometry. No door/entry test after failure. Native reviewed-prefix export129frames verified. Full same-settings baseline comparison is unavailable because the chain stopped. See docs/checked-interaction-benchmark.md.
+- [ ] W8.4 Next: port official non-first keyframe token conditioning and establish a legitimate identity-consistent endpoint producer plus visual evaluator. Do not insert still-image latents as a fake late video frame or assume13B control weights match2B. Existing initial-frame/short-video paths remain preserved.
+
+## 2026-10-03 — user priority override: one-second photorealism
+World/door/taxi action control, long clips and efficiency optimization are deferred. Preserve existing paths. Q1 acceptance: actual25frame~1s MP4 on supplied simple prompt, audit model/config/scheduler/VAE/T5/precision against primary sources, compare bounded configurations, save all settings and memory/time, visually assess realism. Quality remains incomplete until visual criteria pass. New large weight downloads require a concrete manifest and confirmation. Stop after presenting a satisfactory quality baseline; optimize only after user confirms.
+
+- [x] Q1a Audit official2B/13B inference, add bounded Rust quality CLI, correct VAE noise order in isolated profiles, test and run five real25frame configurations. Independent decode/metadata pass. Report: docs/quality-baseline.md.
+- [ ] Q1b Photorealistic human+taxi acceptance FAILED in all five trials. Q3 is provisional only. No efficiency/control progression. Await requested approval for new13Bdev/upscaler files; then implement exact multi-scale path and bounded13B support before new quality comparisons. Do not silently equate a13B preset with compatible inference.
+
+- [ ] Q2 User-photo reference quality: real image-to-video at704x384/25frames. Acceptance: neural motion with same face/jacket/taxi, retained fine texture and sharp foreground, stable geometry; record input hash, crop, settings and peaks. Image conditioning is a separate experiment, not proof of text-only quality. Compare seeds42/43 and inspect native frames; do not count repeated source frames as neural motion.
+
+- [x] Q2a Real image conditioning and three measured neuralMP4 trials completed;47standardtests pass. Same-seed full-temporal VAE decode visibly reduces middle-frame doubling. Selected candidate i2v-704-fullvae42.mp4; docs/photo-quality-baseline.md.
+- [ ] Q2b Equal-photo-detail acceptance remains open: fine texture loss and composition drift persist. Present candidate for review; do not start efficiency stage or count this as text-only baseline success.
+
+## 2026-11-08: text-only quality first
+- Compare the supplied prompt at seed42 with Q3 settings, changing only temporal VAE splitting, then change native resolution alone to 960x640. Save MP4, settings and telemetry and inspect human detail, car, lighting, motion and morphing. No image, no optimization, no control events. Visual acceptance remains open.
+
+- [x] Generated and visually compared Q5/Q6/Q7. Q7 (explicit medium-shot prompt, native960x640, seed42) selected for owner review. Quality acceptance and efficiency stage remain pending.
+
+- Photo follow-up: compare full-temporal decode at 960x544 against 704x384 on the same source, prompt and seed; inspect focus on face, hands, cloth and car in moving frames.
+
+- [x] Two photo960 outputs fully decoded and visually compared; photo960-tap selected for review. Fine-texture acceptance remains open.
+
+- Photo request: create one continuous real image-conditioned scene, export exactly 72 frames at 24fps, fully decode it and inspect the first, middle and last frames before delivery.
+
+- [x] Three-second photo glance: 72 frames decoded and gaze transition visually inspected; MP4 delivered.
+
+- Three-second moving-face quality: compare learned restoration at equal display size and regenerate a closer portrait from the owner image if the eye artifact survives restoration. Select a real MP4 by visual inspection, with weights and full settings recorded.
+
+- [x] New portrait take, equal-scale SR comparison, final verified MP4 selected for owner review. No efficiency progression.
+
+- Produce a continuous 3s photo-conditioned 960x544 native portrait, keep full temporal decoding and full image attention, inspect gaze/hands and fine detail against prior 704x384 render before choosing output.
+
+- [x] Native 960x544 three-second portrait generated, visually reviewed and fully decoded; delivered without post sharpening.
+
+- [x] Train a Rust residual student with one spatial and one temporal supervision signal. Compare with spatial-only training on a separate clip, save weights and decode the output.
+- [ ] Test on diverse held-out motions and scenes with independent evaluation before considering generator-level distillation.
+
+- [x] Compare local patch tracking against frozen student and smoke-test a one-click local Windows x64 training archive. Preserve baseline when temporal RMSE regresses.
+
+- [x] Reproduce the approved student and render through one Cargo alias after cloning the repo. Verify a separate local partial clone with the pack absent from its checkout.
