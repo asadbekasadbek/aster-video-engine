@@ -3,7 +3,7 @@ use crate::{
     inference,
     weights::{self, Result},
 };
-use candle_core::{Device, IndexOp};
+use candle_core::Device;
 use candle_video::utils::deterministic_rng::Pcg32;
 use std::{fs::OpenOptions, io::Write, path::Path, process::Command, time::Instant};
 
@@ -133,6 +133,15 @@ pub fn generate(
         p.text_tokens, p.width, p.height, p.normalized_noise
     )?;
     let _monitor = crate::telemetry::Monitor::start();
+    writeln!(
+        record,
+        "weight_mode={}",
+        if weights::streaming()? {
+            "stream"
+        } else {
+            "resident"
+        }
+    )?;
     let device = Device::new_cuda(0)?;
     let start = Instant::now();
     let model = models.join("ltxv-2b-0.9.8-distilled.safetensors");
@@ -148,6 +157,10 @@ pub fn generate(
     )?;
     let generation = Instant::now();
     let (embeddings, mask) = inference::encode_prompt_tokens(prompt, models, p.text_tokens)?;
+    println!(
+        "stage=text_encoded process_peak_working_set_bytes={:?}",
+        aster_core::memory::peak_working_set_bytes()?
+    );
     let mut rng = Pcg32::new(seed, 1442695040888963407);
     let latents = if let Some(image) = image {
         let input = load_image(ffmpeg, image, p.height, p.width)?;
@@ -209,13 +222,7 @@ pub fn generate(
     };
     aster_core::mp4::encode(ffmpeg, output, spec, |writer| {
         for i in 0..output_frames {
-            let pixels = video
-                .i((0, .., i, .., ..))
-                .and_then(|t| t.permute((1, 2, 0)))
-                .and_then(|t| t.flatten_all())
-                .and_then(|t| t.to_vec1::<f32>())
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            writer.write_frame(i, &inference::rgb_bytes(pixels)?)?;
+            writer.write_frame(i, &inference::frame_rgb(&video, i)?)?;
         }
         Ok(())
     })?;

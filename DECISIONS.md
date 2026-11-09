@@ -80,3 +80,9 @@ Use a closer real image-conditioned take and optional local learned restoration;
 Keep the approved residual weights as the reference. Experimental training writes a sibling run folder and requires an explicit checkpoint choice for rendering. Motion matching did not pass the temporal quality gate.
 
 Ship a versioned lossless pack in Git and bind training to its SHA-256. The clone entry point trains the accepted fixed-pair objective and applies the checkpoint it just saved.
+
+2026-11-09. Default to lossless disk-backed weight streaming in the LTX generation worker. Keep resident control selectable. Preserve text and reference attention implementations, checkpoint dtype, VAE tile layout and all denoising steps. The active half of the VAE still resides in VRAM.
+
+2026-11-09. Preserve checkpoint quantization block contents and exact token ordering when gathering T5 embeddings. Transfer same-dtype payloads directly to the target device. Convert decoded frames to F32 only for export or bounded CPU context; retain existing CPU RGB rounding and finite checks.
+
+2026-11-09. Keep DiT prefetch opt-in. Use CPU read-ahead with a bounded channel and retain an independently budgeted subset of exact BF16 weights across denoising steps. Free both at DiT teardown. Percentages measure additional allocations against free memory at planning time; defaults leave the existing synchronous path in place.

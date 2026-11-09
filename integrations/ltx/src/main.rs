@@ -1,9 +1,12 @@
 use candle_core::{Device, Tensor};
 mod inference;
+mod prefetch;
 mod quality;
 mod reference;
 mod restore;
+mod stream_t5;
 mod telemetry;
+mod vae_half;
 mod weights;
 
 fn probe(device: &Device) -> candle_core::Result<f32> {

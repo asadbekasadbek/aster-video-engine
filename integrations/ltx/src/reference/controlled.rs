@@ -8,7 +8,7 @@ use aster_core::{
     interaction::{self, ReferenceFrame, ReferenceFrameManager, VisualReview},
     video::VideoSpec,
 };
-use candle_core::{Device, IndexOp, Tensor};
+use candle_core::{Device, Tensor};
 use candle_video::utils::deterministic_rng::Pcg32;
 use sha2::{Digest, Sha256};
 use std::{
@@ -365,14 +365,9 @@ pub fn run(args: &[String]) -> Result<()> {
         fps_num: 24,
         fps_den: 1,
     };
-    let rgb = |frame: &Tensor| -> Result<Vec<u8>> {
-        Ok(inference::rgb_bytes(
-            frame.permute((1, 2, 0))?.flatten_all()?.to_vec1::<f32>()?,
-        )?)
-    };
     if let Some(previous) = &previous {
-        let a = rgb(&previous.i((0, .., CONTEXT - 1, .., ..))?)?;
-        let b = rgb(&video.i((0, .., CONTEXT, .., ..))?)?;
+        let a = inference::frame_rgb(previous, CONTEXT - 1)?;
+        let b = inference::frame_rgb(&video, CONTEXT)?;
         let mae = a
             .iter()
             .zip(b)
@@ -383,10 +378,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     aster_core::mp4::encode(ffmpeg, &path(dir, stage, "mp4"), spec, |writer| {
         for i in 0..FRAMES {
-            let data = video
-                .i((0, .., i, .., ..))
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            let pixels = rgb(&data).map_err(|e| std::io::Error::other(e.to_string()))?;
+            let pixels = inference::frame_rgb(&video, i)?;
             writer.write_frame(i, &pixels)?;
         }
         Ok(())
@@ -394,6 +386,8 @@ pub fn run(args: &[String]) -> Result<()> {
     let frame = video
         .narrow(2, FRAMES - CONTEXT, CONTEXT)?
         .contiguous()?
+        .to_device(&Device::Cpu)?
+        .to_dtype(candle_core::DType::F32)?
         .clamp(-1_f32, 1_f32)?
         .flatten_all()?
         .to_vec1::<f32>()?;

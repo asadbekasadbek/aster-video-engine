@@ -75,11 +75,12 @@ pub(crate) fn encode_prompt_tokens(
     mask.resize(tokens, 0);
     let ids = Tensor::from_vec(ids, (1, tokens), &Device::Cpu)?;
     let mask = Tensor::from_vec(mask, (1, tokens), &Device::Cpu)?;
-    let model = QuantizedT5EncoderModel::load(
-        models.join("text_encoder_gguf/t5-v1_1-xxl-encoder-Q5_K_M.gguf"),
-        &Device::Cpu,
-    )?;
-    let embeddings = model.forward(&ids, Some(&mask))?;
+    let path = models.join("text_encoder_gguf/t5-v1_1-xxl-encoder-Q5_K_M.gguf");
+    let embeddings = if weights::streaming()? {
+        crate::stream_t5::encode(&path, &ids, &mask)?
+    } else {
+        QuantizedT5EncoderModel::load(path, &Device::Cpu)?.forward(&ids, Some(&mask))?
+    };
     Ok((embeddings, mask.to_dtype(DType::F32)?))
 } // T5 weights released before loading DiT.
 
@@ -93,11 +94,22 @@ pub(crate) fn denoise(
 ) -> Result<Tensor> {
     let [frames, height, width] = shape;
     let config = presets::v0_9_8_distilled_2b();
-    let tensors = weights::load(model_path, false, DType::BF16, device, WEIGHT_LIMIT)?;
-    let mut transformer = LtxVideoTransformer3DModel::new(
-        &config.transformer,
-        VarBuilder::from_tensors(tensors, DType::BF16, device),
-    )?;
+    let mut transformer: Box<dyn VideoTransformer3D> = if weights::streaming()? {
+        Box::new(
+            crate::reference::transformer::LtxVideoTransformer3DModel::from_disk(
+                &config.transformer,
+                model_path,
+                device,
+                true,
+            )?,
+        )
+    } else {
+        let tensors = weights::load(model_path, false, DType::BF16, device, WEIGHT_LIMIT)?;
+        Box::new(LtxVideoTransformer3DModel::new(
+            &config.transformer,
+            VarBuilder::from_tensors(tensors, DType::BF16, device),
+        )?)
+    };
     let mut scheduler_config = config.scheduler;
     // Official LTX preserves explicit distilled sigmas without terminal stretching.
     scheduler_config.shift_terminal = None;
@@ -122,7 +134,7 @@ pub(crate) fn denoise(
         let start = Instant::now();
         let t = Tensor::full(timestep, (1,), device)?;
         let predicted = VideoTransformer3D::forward(
-            &mut transformer,
+            transformer.as_mut(),
             &latents.to_dtype(DType::BF16)?,
             &embeddings,
             &t,
@@ -180,17 +192,7 @@ pub(crate) fn decode_quality_options(
     temporal_tiling: bool,
 ) -> Result<Tensor> {
     let config = presets::v0_9_8_distilled_2b();
-    let tensors = weights::load(model_path, true, DType::BF16, device, WEIGHT_LIMIT)?;
-    let mut vae = AutoencoderKLLtxVideo::new(
-        config.vae,
-        VarBuilder::from_tensors(tensors, DType::BF16, device),
-    )?;
-    vae.use_tiling = true;
-    vae.use_slicing = true;
-    vae.use_framewise_decoding = temporal_tiling;
-    if !temporal_tiling && latents.dim(2)? == 10 {
-        vae.enable_tiling(Some(256), Some(256), None, Some(192), Some(192), None);
-    }
+    let small_tiles = !temporal_tiling && latents.dim(2)? == 10;
     let latents = latents.to_device(device)?;
     let noise = rng.randn(latents.shape(), device)?;
     let latents = if normalized_noise {
@@ -198,21 +200,67 @@ pub(crate) fn decode_quality_options(
     } else {
         latents
     };
-    let latents = LtxPipeline::denormalize_latents(
-        &latents,
-        vae.latents_mean(),
-        vae.latents_std(),
-        vae.scaling_factor as f32,
-    )?;
-    let latents = if normalized_noise {
-        latents
-    } else {
-        mix_decode_noise(&latents, &noise)?
-    }
-    .to_dtype(DType::BF16)?;
+    let prepare = |mean: &Tensor, std: &Tensor| -> candle_core::Result<Tensor> {
+        let latents = LtxPipeline::denormalize_latents(
+            &latents,
+            mean,
+            std,
+            config.vae.scaling_factor as f32,
+        )?;
+        let latents = if normalized_noise {
+            latents
+        } else {
+            mix_decode_noise(&latents, &noise)?
+        }
+        .to_dtype(DType::BF16)?;
+        Ok(latents)
+    };
     let timestep = Tensor::full(0.05_f32, (1,), device)?.to_dtype(DType::BF16)?;
-    let (_, video) = vae.decode(&latents, Some(&timestep), false, false)?;
-    Ok(video.to_dtype(DType::F32)?.to_device(&Device::Cpu)?)
+    let video = if weights::streaming()? {
+        let vae = crate::vae_half::Half::decoder(
+            &config.vae,
+            weights::vae_half(model_path, false, device)?,
+            small_tiles,
+        )?;
+        vae.decode(&prepare(&vae.mean, &vae.std)?, &timestep, temporal_tiling)?
+    } else {
+        let tensors = weights::load(model_path, true, DType::BF16, device, WEIGHT_LIMIT)?;
+        let mut vae = AutoencoderKLLtxVideo::new(
+            config.vae.clone(),
+            VarBuilder::from_tensors(tensors, DType::BF16, device),
+        )?;
+        vae.use_tiling = true;
+        vae.use_slicing = true;
+        vae.use_framewise_decoding = temporal_tiling;
+        if small_tiles {
+            vae.enable_tiling(Some(256), Some(256), None, Some(192), Some(192), None);
+        }
+        vae.decode(
+            &prepare(vae.latents_mean(), vae.latents_std())?,
+            Some(&timestep),
+            false,
+            false,
+        )?
+        .1
+    };
+    Ok(video)
+}
+
+/// Pack the selected frame before transfer so a strided view cannot copy the
+/// backing storage for the entire clip. Keep the original RGB rounding on CPU.
+pub(crate) fn frame_rgb(video: &Tensor, index: usize) -> std::io::Result<Vec<u8>> {
+    let values = (|| -> candle_core::Result<Vec<f32>> {
+        video
+            .i((0, .., index, .., ..))?
+            .permute((1, 2, 0))?
+            .contiguous()?
+            .to_device(&Device::Cpu)?
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1()
+    })()
+    .map_err(std::io::Error::other)?;
+    rgb_bytes(values)
 }
 
 pub(crate) fn mix_decode_noise(latents: &Tensor, noise: &Tensor) -> candle_core::Result<Tensor> {
@@ -295,13 +343,7 @@ pub fn generate(
     };
     aster_core::mp4::encode(ffmpeg, output, spec, |writer| {
         for frame in 0..frames {
-            let pixels = video
-                .i((0, .., frame, .., ..))
-                .and_then(|t| t.permute((1, 2, 0)))
-                .and_then(|t| t.flatten_all())
-                .and_then(|t| t.to_vec1::<f32>())
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            let pixels = rgb_bytes(pixels)?;
+            let pixels = frame_rgb(&video, frame)?;
             writer.write_frame(frame, &pixels)?;
         }
         Ok(())
@@ -316,6 +358,21 @@ pub fn generate(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rgb_export_preserves_frame_order_and_bf16_values() {
+        use candle_core::{DType, Device, Tensor};
+        let clip = Tensor::from_vec(
+            vec![-1f32, 1., 0., 0.5, 1., -1.],
+            (1, 3, 2, 1, 1),
+            &Device::Cpu,
+        )
+        .unwrap()
+        .to_dtype(DType::BF16)
+        .unwrap();
+        assert_eq!(super::frame_rgb(&clip, 0).unwrap(), [0, 128, 255]);
+        assert_eq!(super::frame_rgb(&clip, 1).unwrap(), [255, 191, 0]);
+        assert!(super::frame_rgb(&clip, 2).is_err());
+    }
     #[test]
     fn frame_limits_match_temporal_compression() {
         for frames in [0, 1, 8, 24, 122, usize::MAX] {

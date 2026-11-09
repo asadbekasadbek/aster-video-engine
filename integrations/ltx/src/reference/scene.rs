@@ -3,7 +3,7 @@ use crate::{
     weights::{self, Result},
 };
 use aster_core::{adaptive, continuity::ReferenceStamp, planner, video::VideoSpec};
-use candle_core::{Device, IndexOp, Tensor};
+use candle_core::{Device, Tensor};
 use candle_video::utils::deterministic_rng::Pcg32;
 use std::{path::Path, time::Instant};
 
@@ -156,13 +156,7 @@ pub fn generate(
                 // The first generated reference frame overlaps the previous segment;
                 // omit it equally in both reference and independent baselines.
                 for frame in usize::from(phase > 0)..frames {
-                    let pixels = inference::rgb_bytes(
-                        video
-                            .i((0, .., frame, .., ..))?
-                            .permute((1, 2, 0))?
-                            .flatten_all()?
-                            .to_vec1::<f32>()?,
-                    )?;
+                    let pixels = inference::frame_rgb(&video, frame)?;
                     if phase > 0 && frame == 1 {
                         let old = last_pixels.as_ref().ok_or("missing previous RGB frame")?;
                         let mae = old
@@ -185,6 +179,8 @@ pub fn generate(
                     video
                         .narrow(2, frames - 1, 1)?
                         .contiguous()?
+                        .to_device(&Device::Cpu)?
+                        .to_dtype(candle_core::DType::F32)?
                         .clamp(-1_f32, 1_f32)?,
                 );
                 stamp = ReferenceStamp::for_snapshot(plan.world.current());

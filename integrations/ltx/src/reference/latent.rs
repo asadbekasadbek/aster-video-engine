@@ -37,6 +37,19 @@ pub fn encode_frame_sized(
     {
         return Err("invalid reference frame shape".into());
     }
+    if weights::streaming()? {
+        let config = presets::v0_9_8_distilled_2b().vae;
+        let encoder =
+            crate::vae_half::Half::encoder(&config, weights::vae_half(path, true, device)?)?;
+        let mode = encoder.posterior_mode(&frame.to_device(device)?.to_dtype(DType::BF16)?)?;
+        return Ok(LtxPipeline::normalize_latents(
+            &mode.to_dtype(DType::F32)?,
+            &encoder.mean,
+            &encoder.std,
+            config.scaling_factor as f32,
+        )?
+        .to_device(&Device::Cpu)?);
+    }
     let tensors = weights::load(path, true, DType::BF16, device, inference::WEIGHT_LIMIT)?;
     let vae = AutoencoderKLLtxVideo::new(
         presets::v0_9_8_distilled_2b().vae,
@@ -88,17 +101,26 @@ pub fn denoise_sized(
         return Err("unsupported reference dimensions".into());
     }
     let config = presets::v0_9_8_distilled_2b();
-    let tensors = weights::load(
-        request.model,
-        false,
-        DType::BF16,
-        device,
-        inference::WEIGHT_LIMIT,
-    )?;
-    let mut transformer = super::transformer::LtxVideoTransformer3DModel::new(
-        &config.transformer,
-        VarBuilder::from_tensors(tensors, DType::BF16, device),
-    )?;
+    let mut transformer = if weights::streaming()? {
+        super::transformer::LtxVideoTransformer3DModel::from_disk(
+            &config.transformer,
+            request.model,
+            device,
+            false,
+        )?
+    } else {
+        let tensors = weights::load(
+            request.model,
+            false,
+            DType::BF16,
+            device,
+            inference::WEIGHT_LIMIT,
+        )?;
+        super::transformer::LtxVideoTransformer3DModel::new(
+            &config.transformer,
+            VarBuilder::from_tensors(tensors, DType::BF16, device),
+        )?
+    };
     let mut schedule = config.scheduler;
     schedule.shift_terminal = None;
     let mut scheduler = FlowMatchEulerDiscreteScheduler::new(schedule)?;

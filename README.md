@@ -74,3 +74,5 @@ five generated clips, settings and measurements. The photorealism acceptance
 criterion is **not yet met**. World/action and efficiency work is deferred.
 
 Windows x64 CPU student training: see [Russian quick start](docs/student-training-ru.md).
+
+Для эксперимента с предзагрузкой на Windows скопируйте [.env.example](.env.example) в .env и запустите генерацию из корня проекта. Настройки RAM и VRAM описаны в [инструкции LTX](integrations/ltx/README.md).

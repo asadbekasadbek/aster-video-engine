@@ -3,6 +3,7 @@
 // Aster modifications: token-wise temporal modulation for reference conditioning.
 use candle_core::{IndexOp, Result, Tensor};
 use candle_nn as nn;
+use candle_video::models::ltx_video::ltx_transformer::LtxVideoTransformerBlock as TextBlock;
 use candle_video::models::ltx_video::ltx_transformer::{
     AdaLayerNormSingle, FeedForward, LayerNormNoParams, LtxAttention, LtxVideoRotaryPosEmbed,
     LtxVideoTransformer3DModelConfig, PixArtAlphaTextProjection, RmsNorm,
@@ -186,7 +187,6 @@ impl LtxVideoTransformerBlock {
     }
 }
 
-#[derive(Clone, Debug)]
 pub struct LtxVideoTransformer3DModel {
     proj_in: nn::Linear,
     scale_shift_table: Tensor, // [2, inner_dim]
@@ -194,6 +194,11 @@ pub struct LtxVideoTransformer3DModel {
     caption_projection: PixArtAlphaTextProjection,
     rope: LtxVideoRotaryPosEmbed,
     transformer_blocks: Vec<LtxVideoTransformerBlock>,
+    streamed: Option<(
+        crate::prefetch::Stream,
+        LtxVideoTransformer3DModelConfig,
+        bool,
+    )>,
     norm_out: LayerNormNoParams,
 
     proj_out: nn::Linear,
@@ -204,6 +209,33 @@ pub struct LtxVideoTransformer3DModel {
 impl LtxVideoTransformer3DModel {
     #[allow(clippy::too_many_arguments)]
     pub fn new(config: &LtxVideoTransformer3DModelConfig, vb: VarBuilder) -> Result<Self> {
+        Self::build(config, vb, None)
+    }
+
+    pub fn from_disk(
+        config: &LtxVideoTransformer3DModelConfig,
+        path: &std::path::Path,
+        device: &candle_core::Device,
+        text_only: bool,
+    ) -> crate::weights::Result<Self> {
+        let file = crate::prefetch::Stream::open(path, device, config.num_layers)?;
+        let vb = file.shared(device)?;
+        Ok(Self::build(
+            config,
+            vb,
+            Some((file, config.clone(), text_only)),
+        )?)
+    }
+
+    fn build(
+        config: &LtxVideoTransformer3DModelConfig,
+        vb: VarBuilder,
+        streamed: Option<(
+            crate::prefetch::Stream,
+            LtxVideoTransformer3DModelConfig,
+            bool,
+        )>,
+    ) -> Result<Self> {
         let out_channels = if config.out_channels == 0 {
             config.in_channels
         } else {
@@ -233,7 +265,11 @@ impl LtxVideoTransformer3DModel {
         );
 
         let mut transformer_blocks = Vec::with_capacity(config.num_layers);
-        for layer_idx in 0..config.num_layers {
+        for layer_idx in 0..if streamed.is_none() {
+            config.num_layers
+        } else {
+            0
+        } {
             transformer_blocks.push(LtxVideoTransformerBlock::new(
                 inner_dim,
                 config.num_attention_heads,
@@ -258,6 +294,7 @@ impl LtxVideoTransformer3DModel {
             caption_projection,
             rope,
             transformer_blocks,
+            streamed,
             norm_out,
             proj_out,
             pipeline_config: TransformerConfig {
@@ -347,7 +384,16 @@ impl LtxVideoTransformer3DModel {
         let mut hidden_states = hidden_states;
         let image_rotary_emb = Some((&cos, &sin));
 
-        for (index, block) in self.transformer_blocks.iter().enumerate() {
+        let reader = self
+            .streamed
+            .as_ref()
+            .map(|(stream, _, _)| {
+                stream.start(self.pipeline_config.num_layers, &self.skip_block_list)
+            })
+            .transpose()
+            .map_err(|e| candle_core::Error::Msg(e.to_string()))?
+            .flatten();
+        for index in 0..self.pipeline_config.num_layers {
             if self.skip_block_list.contains(&index) {
                 continue;
             }
@@ -358,13 +404,68 @@ impl LtxVideoTransformer3DModel {
                 None
             };
 
-            hidden_states = block.forward(
-                &hidden_states,
-                &encoder_hidden_states,
-                &temb,
-                image_rotary_emb,
-                encoder_attention_mask,
-            )?;
+            hidden_states = if let Some((file, c, text_only)) = &self.streamed {
+                let device = hidden_states.device();
+                let vb = file
+                    .block(index, device, reader.as_ref())
+                    .map_err(|e| candle_core::Error::Msg(e.to_string()))?
+                    .pp("transformer_blocks")
+                    .pp(index.to_string());
+                // Keep each backend's original attention and conditioning operations.
+                if *text_only {
+                    let block = TextBlock::new(
+                        c.num_attention_heads * c.attention_head_dim,
+                        c.num_attention_heads,
+                        c.attention_head_dim,
+                        c.cross_attention_dim,
+                        &c.qk_norm,
+                        c.attention_bias,
+                        c.attention_out_bias,
+                        c.norm_eps,
+                        c.norm_elementwise_affine,
+                        vb,
+                    )?;
+                    let y = block.forward(
+                        &hidden_states,
+                        &encoder_hidden_states,
+                        &temb.squeeze(1)?,
+                        image_rotary_emb,
+                        encoder_attention_mask,
+                    )?;
+                    device.synchronize()?;
+                    y
+                } else {
+                    let block = LtxVideoTransformerBlock::new(
+                        c.num_attention_heads * c.attention_head_dim,
+                        c.num_attention_heads,
+                        c.attention_head_dim,
+                        c.cross_attention_dim,
+                        &c.qk_norm,
+                        c.attention_bias,
+                        c.attention_out_bias,
+                        c.norm_eps,
+                        c.norm_elementwise_affine,
+                        vb,
+                    )?;
+                    let y = block.forward(
+                        &hidden_states,
+                        &encoder_hidden_states,
+                        &temb,
+                        image_rotary_emb,
+                        encoder_attention_mask,
+                    )?;
+                    device.synchronize()?;
+                    y
+                }
+            } else {
+                self.transformer_blocks[index].forward(
+                    &hidden_states,
+                    &encoder_hidden_states,
+                    &temb,
+                    image_rotary_emb,
+                    encoder_attention_mask,
+                )?
+            };
 
             if let (Some(mask), Some(orig)) = (skip_layer_mask, original_hidden_states) {
                 // mask shape: [num_layers, batch]

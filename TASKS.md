@@ -119,3 +119,9 @@ World/door/taxi action control, long clips and efficiency optimization are defer
 - [x] Compare local patch tracking against frozen student and smoke-test a one-click local Windows x64 training archive. Preserve baseline when temporal RMSE regresses.
 
 - [x] Reproduce the approved student and render through one Cargo alias after cloning the repo. Verify a separate local partial clone with the pack absent from its checkout.
+
+- [x] Stream T5 and DiT blocks and load only the required VAE half. Verify identical MP4 for text and photo, record resource cost against resident mode.
+
+- [x] Reduce redundant CPU allocations in stream-mode T5 lookup and same-dtype weight uploads. Compare individual changes at fixed seed and verify RGB export against the original text MP4.
+
+- [x] Implement opt-in block read-ahead and separate available RAM/VRAM percentage budgets. Verify exact output, timing and memory on real text and photo generation and document PowerShell/.env usage.
