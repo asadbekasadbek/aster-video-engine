@@ -86,3 +86,11 @@ Ship a versioned lossless pack in Git and bind training to its SHA-256. The clon
 2026-11-09. Preserve checkpoint quantization block contents and exact token ordering when gathering T5 embeddings. Transfer same-dtype payloads directly to the target device. Convert decoded frames to F32 only for export or bounded CPU context; retain existing CPU RGB rounding and finite checks.
 
 2026-11-09. Keep DiT prefetch opt-in. Use CPU read-ahead with a bounded channel and retain an independently budgeted subset of exact BF16 weights across denoising steps. Free both at DiT teardown. Percentages measure additional allocations against free memory at planning time; defaults leave the existing synchronous path in place.
+
+Run the SAM2 CPU predictor in an isolated Rust crate to keep its Candle fork out of the LTX executable. Export depth, masks, captions and CoTracker descriptors as separate research outputs. Reserve DAVIS val for evaluation. Do not use auxiliary labels in RGB reconstruction until their alignment and objectives have been validated.
+
+Use opt-in teacher-cuda for Qwen captions on this Windows host. Single-frame captions remain human-reviewable hypotheses. Keep noncommercial CoTracker outputs out of the bundled training set pending source-specific rights review.
+
+Use a separate opt-in reference13b-704-fullvae profile with bounded streaming for the first 13B Dev trial. Keep the existing 2B profiles and text encoder. The trial uses native BF16 weights, positive conditioning and one pass at 704x384; official multi-scale rendering uses additional guidance and a learned upscaler.
+
+Run the 0.9.8 two-pass guidance branches sequentially to bound GPU activation memory; apply STG to self-attention values at the scheduled indices. Use 256px spatial VAE tiles for the 49-frame full-temporal decode. Keep the 2B and existing single-pass 13B profiles available.

@@ -17,7 +17,7 @@ const RAM: &str = "ASTER_PREFETCH_RAM_PERCENT";
 const VRAM: &str = "ASTER_PREFETCH_VRAM_PERCENT";
 const MIB: usize = 1024 * 1024;
 // Same hard per-group payload limit as BlockFile.
-const SLOT: usize = 256 * MIB;
+const SMALL_BLOCK_LIMIT: usize = 256 * MIB;
 
 fn file_values(contents: &str) -> HashMap<&str, &str> {
     contents
@@ -26,7 +26,8 @@ fn file_values(contents: &str) -> HashMap<&str, &str> {
         .filter_map(|line| {
             let (key, value) = line.split('#').next()?.split_once('=')?;
             let key = key.trim();
-            matches!(key, SWITCH | RAM | VRAM).then_some((key, value.trim()))
+            matches!(key, SWITCH | RAM | VRAM | "ASTER_QUALITY_PROFILE")
+                .then_some((key, value.trim()))
         })
         .collect()
 }
@@ -89,7 +90,7 @@ fn free_ram() -> Result<usize> {
 }
 
 #[cfg(feature = "cuda")]
-fn free_vram(device: &Device) -> Result<usize> {
+pub(crate) fn free_vram(device: &Device) -> Result<usize> {
     Ok(device
         .as_cuda_device()?
         .cuda_stream()
@@ -98,8 +99,28 @@ fn free_vram(device: &Device) -> Result<usize> {
         .0)
 }
 #[cfg(not(feature = "cuda"))]
-fn free_vram(_: &Device) -> Result<usize> {
+pub(crate) fn free_vram(_: &Device) -> Result<usize> {
     Err("GPU caching requires a CUDA build".into())
+}
+
+fn dotenv() -> Result<String> {
+    let contents = match std::fs::File::open(".env") {
+        Ok(file) => {
+            let mut text = String::new();
+            file.take(65537).read_to_string(&mut text)?;
+            if text.len() > 65536 {
+                return Err("Aster .env exceeds 64 KiB".into());
+            }
+            text
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(contents)
+}
+
+pub fn quality_profile() -> Result<Option<String>> {
+    setting(&file_values(&dotenv()?), "ASTER_QUALITY_PROFILE")
 }
 
 pub struct Stream {
@@ -111,18 +132,14 @@ pub struct Stream {
 
 impl Stream {
     pub fn open(path: &Path, device: &Device, layers: usize) -> Result<Self> {
-        let contents = match std::fs::File::open(".env") {
-            Ok(file) => {
-                let mut text = String::new();
-                file.take(65537).read_to_string(&mut text)?;
-                if text.len() > 65536 {
-                    return Err("prefetch .env exceeds 64 KiB".into());
-                }
-                text
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(e.into()),
+        // Both the loader and the cache budget use this bound. A 13B block
+        // contains 537,059,328 BF16 payload bytes, above the 2B limit.
+        let slot = if layers == 48 {
+            544 * MIB
+        } else {
+            SMALL_BLOCK_LIMIT
         };
+        let contents = dotenv()?;
         let file = file_values(&contents);
         let enabled = match setting(&file, SWITCH)?.as_deref() {
             Some("1") => true,
@@ -144,8 +161,8 @@ impl Stream {
             };
             // In addition to the queue: a producer, a consuming block and
             // temporary raw/converted tensor buffers during CPU deserialization.
-            let queue = (host / SLOT).saturating_sub(4).min(layers);
-            let slots = (vram / SLOT).min(layers);
+            let queue = (host / slot).saturating_sub(4).min(layers);
+            let slots = (vram / slot).min(layers);
             println!(
                 "prefetch=on ram_percent={ram} vram_percent={gpu} ram_budget_bytes={host} vram_budget_bytes={vram} queue_blocks={queue} gpu_cache_blocks={slots}"
             );
@@ -154,7 +171,7 @@ impl Stream {
             (0, 0)
         };
         Ok(Self {
-            file: Arc::new(BlockFile::open(path)?),
+            file: Arc::new(BlockFile::open(path, slot)?),
             queue,
             cache_slots,
             cache: Mutex::new(HashMap::new()),
@@ -279,6 +296,16 @@ mod tests {
             assert!(percentage(RAM, Some(invalid), 10).is_err());
         }
     }
+    #[test]
+    fn reads_default_quality_profile() {
+        let options =
+            file_values("# defaults\nASTER_QUALITY_PROFILE=reference13b-704-fullvae # portrait");
+        assert_eq!(
+            options.get("ASTER_QUALITY_PROFILE"),
+            Some(&"reference13b-704-fullvae")
+        );
+    }
+
     #[test]
     fn allowances_preserve_headroom_and_respect_zero() {
         assert_eq!(allowance(1000, 25, 100), 250);

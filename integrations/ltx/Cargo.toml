@@ -10,12 +10,17 @@ publish = false
 candle-video = { git = "https://github.com/FerrisMind/candle-video", rev = "ebe43c414d2519535357113cad22d15fba0ce900", default-features = false }
 candle-core = { git = "https://github.com/FerrisMind/candle", branch = "wgpu/vulkan", default-features = false }
 candle-nn = { git = "https://github.com/FerrisMind/candle", branch = "wgpu/vulkan", default-features = false }
+candle-transformers = { git = "https://github.com/FerrisMind/candle", branch = "wgpu/vulkan", default-features = false }
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+serde_json = '=1.0.151'
+png = "=0.18.1"
 aster-core = { path = "../../crates/aster-core" }
 safetensors = "=0.8.0"
 tokenizers = "=0.23.2"
 sha2 = "=0.10.9"
 
 [features]
+teacher-cuda = ["cuda", "candle-nn/cuda"]
 default = []
 cuda = ["candle-video/cuda", "candle-core/cuda"]
 

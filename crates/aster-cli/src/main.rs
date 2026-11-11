@@ -17,7 +17,7 @@ Event experiment: aster sequence --prompt TEXT|--prompt-file PATH --output NEW.m
 [--events 0..6] [--seed N] (restricted taxi grammar; frames per segment).\n\
 Checked taxi: aster control --worker PATH --models DIR --run-dir DIR --ffmpeg PATH --stage 0..13.\n\
 Accepted export: aster control-export --worker PATH --run-dir DIR --ffmpeg PATH --output NEW.mp4 --stages 1..14.\n\
-Quality: aster quality --prompt TEXT|--prompt-file PATH --output NEW.mp4 [--worker PATH] [--models DIR] [--ffmpeg PATH] [--profile legacy|corrected|native576|native576-t5-256|reference704|reference704-fullvae|reference704-3s-fullvae|reference960-fullvae|reference960-3s-fullvae|text576-fullvae|text960-fullvae] [--seed N] [--image PATH].\n\
+Quality: aster quality --prompt TEXT|--prompt-file PATH --output NEW.mp4 [--worker PATH] [--models DIR] [--ffmpeg PATH] [--profile legacy|corrected|native576|native576-t5-256|reference13b-multiscale-2s|reference13b-704-fullvae|reference704|reference704-fullvae|reference704-3s-fullvae|reference960-fullvae|reference960-3s-fullvae|text576-fullvae|text960-fullvae] [--seed N] [--image PATH].\n\
 Output: key=value records; timing includes allocation and checksum.\n";
 
 fn prompt_argument(args: &[String]) -> Result<String, Box<dyn std::error::Error>> {

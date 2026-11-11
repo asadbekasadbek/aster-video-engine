@@ -1,0 +1,13 @@
+[package]
+name = "aster-sam2"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+sam2-rs = { git = "https://github.com/henriksson-lab/sam2-rs", rev = "edb4cb76cfd85bdc69915893a9addea7ebe3bd62" }
+candle-core = {git="https://github.com/mahogny/candle.git",rev="0998c8c655ae84330149ddbff509916254b887a1"}
+image = {version="0.25", default-features=false,features=["jpeg","png"]}
+png="0.18"

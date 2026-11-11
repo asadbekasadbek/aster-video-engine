@@ -1,8 +1,10 @@
 pub mod controlled;
 pub mod latent;
+pub mod multiscale;
 mod portrait_attention;
 pub mod scene;
 pub mod transformer;
+mod upscaler;
 
 #[cfg(test)]
 mod tests {

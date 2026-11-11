@@ -20,15 +20,17 @@ pub fn streaming() -> Result<bool> {
 
 pub struct BlockFile {
     file: std::sync::Mutex<File>,
+    group_limit: usize,
     metadata: aster_core::model::Inspection,
 }
 
 impl BlockFile {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, group_limit: usize) -> Result<Self> {
         let mut file = File::open(path)?;
         let metadata = aster_core::model::inspect(&mut file)?;
         Ok(Self {
             file: std::sync::Mutex::new(file),
+            group_limit,
             metadata,
         })
     }
@@ -60,7 +62,7 @@ impl BlockFile {
             scope,
             DType::BF16,
             device,
-            256 * 1024 * 1024,
+            self.group_limit,
         )
     }
 }

@@ -125,3 +125,14 @@ World/door/taxi action control, long clips and efficiency optimization are defer
 - [x] Reduce redundant CPU allocations in stream-mode T5 lookup and same-dtype weight uploads. Compare individual changes at fixed seed and verify RGB export against the original text MP4.
 
 - [x] Implement opt-in block read-ahead and separate available RAM/VRAM percentage budgets. Verify exact output, timing and memory on real text and photo generation and document PowerShell/.env usage.
+
+- [x] Run official depth and SAM 2.1 checkpoints on DAVIS, measure region IoU with only first-frame initialization, and extract CoTracker3 spatial features in Rust.
+- [ ] Validate full CoTracker3 temporal update and visibility against reference tracks. Evaluate captions on independent labeled examples before training with them.
+
+- [x] Run the CoTracker3 learned temporal update and visibility head on two real frame descriptors; check a duplicate frame and a known image translation. Broader tracking/occlusion evaluation remains open.
+
+- [x] Decode captions for a real DAVIS image and a decoded LTX frame on RTX 4070, compare with visual inspection. Next: collect independently reviewed targets from permissioned train clips and measure held-out student performance.
+
+- [x] Local 13B Dev trial: decode 25 frames at 704x384 from the same portrait and seed as a fresh 2B control, record measured resources, inspect the frames.
+
+- [ ] Generate one 2.000s 13B Dev portrait with the 0.9.8 spatial upscaler and both guidance passes. Decode all 48 output frames and inspect motion/detail.

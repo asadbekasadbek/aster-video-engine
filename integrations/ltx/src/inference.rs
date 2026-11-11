@@ -192,7 +192,7 @@ pub(crate) fn decode_quality_options(
     temporal_tiling: bool,
 ) -> Result<Tensor> {
     let config = presets::v0_9_8_distilled_2b();
-    let small_tiles = !temporal_tiling && latents.dim(2)? == 10;
+    let small_tiles = !temporal_tiling && matches!(latents.dim(2)?, 7 | 10);
     let latents = latents.to_device(device)?;
     let noise = rng.randn(latents.shape(), device)?;
     let latents = if normalized_noise {

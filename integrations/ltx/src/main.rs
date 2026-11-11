@@ -1,7 +1,12 @@
 use candle_core::{Device, Tensor};
+mod cotracker_features;
+mod cotracker_pair;
+mod davis;
+mod depth_teacher;
 mod inference;
 mod prefetch;
 mod quality;
+mod qwen_teacher;
 mod reference;
 mod restore;
 mod stream_t5;
@@ -54,17 +59,19 @@ fn probe(device: &Device) -> candle_core::Result<f32> {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("teacher-target") {
-        return restore::prepare(&args[1..]);
-    }
-    if args.first().map(String::as_str) == Some("restore-glance") {
-        return restore::run(&args[1..]);
-    }
-    if args.first().map(String::as_str) == Some("control") {
-        return reference::controlled::run(&args[1..]);
-    }
-    if args.first().map(String::as_str) == Some("control-export") {
-        return reference::controlled::export(&args[1..]);
+    if let Some((command, rest)) = args.split_first() {
+        match command.as_str() {
+            "cotracker-pair" => return cotracker_pair::run(rest),
+            "cotracker-features" => return cotracker_features::run(rest),
+            "qwen-caption" => return qwen_teacher::run(rest),
+            "depth-frame" => return depth_teacher::run(rest),
+            "davis-iou" => return davis::run(rest),
+            "teacher-target" => return restore::prepare(rest),
+            "restore-glance" => return restore::run(rest),
+            "control" => return reference::controlled::run(rest),
+            "control-export" => return reference::controlled::export(rest),
+            _ => {}
+        }
     }
     if args.len() >= 9
         && args.len() % 2 == 1
@@ -78,7 +85,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut reuse = true;
         let mut events = 6;
         let mut seed = 42;
-        let mut profile = "corrected";
+        let mut profile = None;
         let mut image = None;
         let mut seen = std::collections::HashSet::new();
         for pair in args[9..].as_chunks::<2>().0 {
@@ -91,7 +98,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "--seed" if args[0] == "sequence" || args[0] == "quality" => {
                     seed = pair[1].parse()?
                 }
-                "--profile" if args[0] == "quality" => profile = &pair[1],
+                "--profile" if args[0] == "quality" => profile = Some(pair[1].as_str()),
                 "--image" if args[0] == "quality" => image = Some(std::path::Path::new(&pair[1])),
                 "--reuse" if args[0] == "sequence" => {
                     reuse = match pair[1].as_str() {
@@ -104,16 +111,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         if args[0] == "quality" {
+            let fallback = if profile.is_none() {
+                prefetch::quality_profile()?
+            } else {
+                None
+            };
+            let profile = profile.or(fallback.as_deref()).unwrap_or("corrected");
             if seen.iter().any(|flag| flag.as_str() == "--frames")
                 && frames
-                    != (if matches!(
-                        profile,
-                        "reference704-3s-fullvae" | "reference960-3s-fullvae"
-                    ) {
-                        73
-                    } else {
-                        25
-                    })
+                    != match profile {
+                        "reference13b-multiscale-2s" => 49,
+                        "reference704-3s-fullvae" | "reference960-3s-fullvae" => 73,
+                        _ => 25,
+                    }
             {
                 return Err("frame count conflicts with quality profile".into());
             }

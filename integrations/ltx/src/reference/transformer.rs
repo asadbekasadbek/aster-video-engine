@@ -80,6 +80,7 @@ impl LtxVideoTransformerBlock {
         temb: &Tensor,                  // [B, T, 6*dim]
         image_rotary_emb: Option<(&Tensor, &Tensor)>,
         encoder_attention_mask: Option<&Tensor>,
+        values_only: bool,
     ) -> Result<Tensor> {
         let b = hidden_states.dim(0)?;
         let norm_hidden = self.norm1.forward(hidden_states)?;
@@ -141,7 +142,11 @@ impl LtxVideoTransformerBlock {
         };
 
         // Self-attn (encoder_hidden_states=None) with RoPE
-        let attn1 = self.attn1.forward(&norm_hidden, image_rotary_emb)?;
+        let attn1 = if values_only {
+            self.attn1.projected_values(&norm_hidden)?
+        } else {
+            self.attn1.forward(&norm_hidden, image_rotary_emb)?
+        };
         let gate_msa = if gate_msa.dim(1)? == 1 {
             gate_msa.broadcast_as((b, hidden_states.dim(1)?, gate_msa.dim(2)?))?
         } else {
@@ -203,6 +208,7 @@ pub struct LtxVideoTransformer3DModel {
 
     proj_out: nn::Linear,
     pipeline_config: TransformerConfig,
+    pub(super) value_blocks: Vec<usize>,
     skip_block_list: Vec<usize>,
 }
 
@@ -303,6 +309,7 @@ impl LtxVideoTransformer3DModel {
                 patch_size_t: config.patch_size_t,
                 num_layers: config.num_layers,
             },
+            value_blocks: Vec::new(),
             skip_block_list: Vec::new(),
         })
     }
@@ -453,6 +460,7 @@ impl LtxVideoTransformer3DModel {
                         &temb,
                         image_rotary_emb,
                         encoder_attention_mask,
+                        self.value_blocks.contains(&index),
                     )?;
                     device.synchronize()?;
                     y
@@ -464,6 +472,7 @@ impl LtxVideoTransformer3DModel {
                     &temb,
                     image_rotary_emb,
                     encoder_attention_mask,
+                    self.value_blocks.contains(&index),
                 )?
             };
 

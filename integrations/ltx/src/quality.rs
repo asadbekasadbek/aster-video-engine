@@ -51,7 +51,10 @@ impl Profile {
                 text_tokens: 256,
                 ..base
             },
-            "reference704" | "reference704-fullvae" | "reference704-3s-fullvae" => Self {
+            "reference13b-704-fullvae"
+            | "reference704"
+            | "reference704-fullvae"
+            | "reference704-3s-fullvae" => Self {
                 width: 704,
                 height: 384,
                 text_tokens: 256,
@@ -59,7 +62,7 @@ impl Profile {
             },
             _ => {
                 return Err(
-                    "quality profiles:legacy|corrected|native576|native576-t5-256|reference704|reference704-fullvae|reference704-3s-fullvae|reference960-fullvae|reference960-3s-fullvae|text576-fullvae|text960-fullvae"
+                    "quality profiles:legacy|corrected|native576|native576-t5-256|reference13b-multiscale-2s|reference13b-704-fullvae|reference704|reference704-fullvae|reference704-3s-fullvae|reference960-fullvae|reference960-3s-fullvae|text576-fullvae|text960-fullvae"
                         .into(),
                 );
             }
@@ -76,7 +79,44 @@ pub fn generate(
     seed: u64,
     image: Option<&Path>,
 ) -> Result<()> {
+    if profile == "reference13b-multiscale-2s" {
+        return crate::reference::multiscale::generate(
+            prompt,
+            models,
+            output,
+            ffmpeg,
+            seed,
+            image.ok_or("reference image required")?,
+        );
+    }
     let p = Profile::named(profile)?;
+    let dev = profile == "reference13b-704-fullvae";
+    if dev && !weights::streaming()? {
+        return Err("13B requires ASTER_WEIGHT_MODE=stream".into());
+    }
+    let (name, hash, bytes) = if dev {
+        (
+            "ltxv-13b-0.9.8-dev",
+            "56b39a874ef9d0c7ad4099954f0ee4fa7e600ce83a24b3736f9e12223e7c71be",
+            28579183340u64,
+        )
+    } else {
+        (
+            "ltxv-2b-0.9.8-distilled",
+            "76aa8c4786af752fa6f951947129d5290c3c6c0b2fadcadea6b5e114ae2cad8f",
+            6340744492,
+        )
+    };
+    let sigmas = if dev {
+        crate::reference::latent::dev_sigmas()
+            .iter()
+            .map(f32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    } else {
+        "1,0.9937,0.9875,0.9812,0.9750,0.9094,0.7250".into()
+    };
+    let steps = if dev { 30 } else { 7 };
     let three_seconds = matches!(
         profile,
         "reference704-3s-fullvae" | "reference960-3s-fullvae"
@@ -129,7 +169,7 @@ pub fn generate(
         .open(output.with_extension("params.txt"))?;
     writeln!(
         record,
-        "status=planned\nprofile={profile}\nprompt={prompt:?}\nseed={seed}\nrng=PCG32-stream1442695040888963407-not-torch-generator\nmodel=ltxv-2b-0.9.8-distilled\nmodel_sha256=76aa8c4786af752fa6f951947129d5290c3c6c0b2fadcadea6b5e114ae2cad8f\ntext_encoder=t5-v1_1-xxl-encoder-Q5_K_M.gguf\ntext_encoder_sha256=b51cbb10b1a7aac6dd1c3b62f0ed908bfd06e0b42d2f3577d43e061361f51dae\ntext_max_tokens={}\nwidth={}\nheight={}\nframes={output_frames}\nmodel_frames={model_frames}\nfps=24\nprecision_dit_vae=BF16\nprecision_scheduler=F32\nweight_quantization=none-for-DiT-VAE,T5-Q5_K_M\nsigmas=1,0.9937,0.9875,0.9812,0.9750,0.9094,0.7250,terminal0\nscheduler=FlowMatchEuler-explicit-sigmas-no-terminal-stretch\nsteps=7\nCFG=1\nSTG=0\nstochastic_sampling=false\nnegative_prompt=unused-CFG1\ndecode_timestep=0.05\ndecode_noise_scale=0.025\nnoise_before_denormalization={}\nvae=checkpoint-bundled-per-channel-normalization\nvae_spatial_tile={tile}\nvae_temporal_tile=16-stride8\nvae_slicing=true\npasses=1\nlearned_upscaler=false\nprompt_enhancement=false\ninitial_free_gpu_mib={free}\ntelemetry=sampled-device-wide-stdout-log\n",
+        "status=planned\nprofile={profile}\nprompt={prompt:?}\nseed={seed}\nrng=PCG32-stream1442695040888963407-not-torch-generator\nmodel={name}\nmodel_sha256={hash}\ntext_encoder=t5-v1_1-xxl-encoder-Q5_K_M.gguf\ntext_encoder_sha256=b51cbb10b1a7aac6dd1c3b62f0ed908bfd06e0b42d2f3577d43e061361f51dae\ntext_max_tokens={}\nwidth={}\nheight={}\nframes={output_frames}\nmodel_frames={model_frames}\nfps=24\nprecision_dit_vae=BF16\nprecision_scheduler=F32\nweight_quantization=none-for-DiT-VAE,T5-Q5_K_M\nsigmas={sigmas},terminal0\nscheduler=FlowMatchEuler-explicit-sigmas-no-terminal-stretch\nsteps={steps}\nCFG=1\nSTG=0\nstochastic_sampling=false\nnegative_prompt=unused-CFG1\ndecode_timestep=0.05\ndecode_noise_scale=0.025\nnoise_before_denormalization={}\nvae=checkpoint-bundled-per-channel-normalization\nvae_spatial_tile={tile}\nvae_temporal_tile=16-stride8\nvae_slicing=true\npasses=1\nlearned_upscaler=false\nprompt_enhancement=false\ninitial_free_gpu_mib={free}\ntelemetry=sampled-device-wide-stdout-log\n",
         p.text_tokens, p.width, p.height, p.normalized_noise
     )?;
     let _monitor = crate::telemetry::Monitor::start();
@@ -144,12 +184,18 @@ pub fn generate(
     )?;
     let device = Device::new_cuda(0)?;
     let start = Instant::now();
-    let model = models.join("ltxv-2b-0.9.8-distilled.safetensors");
-    weights::verify(
-        &model,
-        6_340_744_492,
-        "76aa8c4786af752fa6f951947129d5290c3c6c0b2fadcadea6b5e114ae2cad8f",
-    )?;
+    let model = if dev {
+        std::env::var_os("ASTER_13B_CHECKPOINT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                models
+                    .with_file_name("ltxv-13b-0.9.8-dev")
+                    .join(format!("{name}.safetensors"))
+            })
+    } else {
+        models.join(format!("{name}.safetensors"))
+    };
+    weights::verify(&model, bytes, hash)?;
     weights::verify(
         &models.join("text_encoder_gguf/t5-v1_1-xxl-encoder-Q5_K_M.gguf"),
         3_386_856_640,
@@ -178,7 +224,7 @@ pub fn generate(
             &device,
             [p.height, p.width],
         )?;
-        crate::reference::latent::denoise_sized(
+        crate::reference::latent::denoise_model(
             crate::reference::latent::Request {
                 model: &model,
                 text: &(embeddings, mask),
@@ -188,6 +234,7 @@ pub fn generate(
             &device,
             &mut rng,
             [p.height, p.width],
+            dev,
         )?
     } else {
         writeln!(record, "mode=text-to-video")?;
@@ -241,7 +288,7 @@ pub fn generate(
     Ok(())
 }
 
-fn load_image(
+pub(crate) fn load_image(
     ffmpeg: &Path,
     image: &Path,
     height: usize,
@@ -262,7 +309,7 @@ fn load_image(
 fn image_tensor(bytes: &[u8], height: usize, width: usize) -> Result<candle_core::Tensor> {
     if !matches!(
         [height, width],
-        [256, 384] | [384, 576] | [384, 704] | [544, 960]
+        [224, 448] | [448, 896] | [256, 384] | [384, 576] | [384, 704] | [544, 960]
     ) || bytes.len() != height * width * 3
     {
         return Err("invalid image dimensions/extent".into());

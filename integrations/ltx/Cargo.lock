@@ -168,8 +168,12 @@ dependencies = [
  "aster-core",
  "candle-core",
  "candle-nn",
+ "candle-transformers",
  "candle-video",
+ "image",
+ "png",
  "safetensors",
+ "serde_json",
  "sha2",
  "tokenizers",
 ]

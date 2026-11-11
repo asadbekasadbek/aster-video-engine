@@ -25,7 +25,10 @@ pub fn encode_frame_sized(
     device: &Device,
     size: [usize; 2],
 ) -> Result<Tensor> {
-    if !matches!(size, [256, 384] | [384, 576] | [384, 704] | [544, 960]) {
+    if !matches!(
+        size,
+        [224, 448] | [448, 896] | [256, 384] | [384, 576] | [384, 704] | [544, 960]
+    ) {
         return Err("unsupported reference dimensions".into());
     }
     if frame.dims().len() != 5
@@ -96,11 +99,39 @@ pub fn denoise_sized(
     rng: &mut Pcg32,
     size: [usize; 2],
 ) -> Result<Tensor> {
+    denoise_model(request, device, rng, size, false)
+}
+
+/// Thirty rectified-flow steps, half linear in noise and half quadratic.
+/// The two pieces have matching first derivatives at the midpoint.
+pub fn dev_sigmas() -> Vec<f32> {
+    (0..30)
+        .map(|i| {
+            let x = i as f64 / 15.;
+            (1. - 0.025 * x - 0.95 * (x - 1.).max(0.).powi(2)) as f32
+        })
+        .collect()
+}
+
+pub fn denoise_model(
+    request: Request<'_>,
+    device: &Device,
+    rng: &mut Pcg32,
+    size: [usize; 2],
+    dev: bool,
+) -> Result<Tensor> {
     inference::validate_frames(request.frames)?;
-    if !matches!(size, [256, 384] | [384, 576] | [384, 704] | [544, 960]) {
+    if !matches!(
+        size,
+        [224, 448] | [448, 896] | [256, 384] | [384, 576] | [384, 704] | [544, 960]
+    ) {
         return Err("unsupported reference dimensions".into());
     }
-    let config = presets::v0_9_8_distilled_2b();
+    let config = if dev {
+        presets::v0_9_8_dev_13b()
+    } else {
+        presets::v0_9_8_distilled_2b()
+    };
     let mut transformer = if weights::streaming()? {
         super::transformer::LtxVideoTransformer3DModel::from_disk(
             &config.transformer,
@@ -124,10 +155,15 @@ pub fn denoise_sized(
     let mut schedule = config.scheduler;
     schedule.shift_terminal = None;
     let mut scheduler = FlowMatchEulerDiscreteScheduler::new(schedule)?;
+    let sigmas = if dev {
+        Some(dev_sigmas())
+    } else {
+        config.inference.timesteps
+    };
     scheduler.set_timesteps(
-        Some(7),
+        Some(config.inference.num_inference_steps),
         device,
-        config.inference.timesteps.as_deref(),
+        sigmas.as_deref(),
         Some(0.0),
         None,
     )?;
@@ -215,6 +251,14 @@ pub fn denoise_sized(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dev_schedule_matches_linear_midpoint_and_quadratic_tail() {
+        let s = dev_sigmas();
+        assert_eq!(s.len(), 30);
+        assert_eq!((s[0], s[15]), (1., 0.975));
+        assert!((s[29] - 0.12411111).abs() < 1e-6);
+        assert!(s.windows(2).all(|p| p[0] > p[1]));
+    }
     #[test]
     fn hard_prefix_is_exact_while_other_tokens_change() {
         let r = Tensor::new(&[[[7_f32, 8.]]], &Device::Cpu).unwrap();

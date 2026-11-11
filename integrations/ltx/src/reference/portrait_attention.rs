@@ -50,6 +50,9 @@ impl SelfAttention {
             dim,
         })
     }
+    pub fn projected_values(&self, x: &Tensor) -> Result<Tensor> {
+        self.out.forward(&self.v.forward(x)?)
+    }
     pub fn forward(&self, x: &Tensor, rope: Option<(&Tensor, &Tensor)>) -> Result<Tensor> {
         let (b, s, _) = x.dims3()?;
         let mut q = self.nq.forward(&self.q.forward(x)?)?;
